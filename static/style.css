@@ -1,0 +1,29 @@
+:root { --bg:#14161a; --fg:#e8eaed; --dim:#9aa0a6; --accent:#4da3ff; --warn:#ffb04d; }
+* { box-sizing: border-box; }
+body { margin:0; display:flex; height:100vh; background:var(--bg); color:var(--fg);
+       font:13px/1.5 system-ui, sans-serif; }
+#queue { width:260px; flex:none; overflow-y:auto; border-right:1px solid #2a2e35; padding:8px; }
+#queue h2 { font-size:12px; color:var(--dim); margin:4px 0 8px; }
+#queue-list { list-style:none; margin:0; padding:0; }
+#queue-list li { padding:4px 6px; border-radius:4px; cursor:pointer; white-space:nowrap;
+                 overflow:hidden; text-overflow:ellipsis; }
+#queue-list li:hover { background:#20242b; }
+#queue-list li.active { background:var(--accent); color:#0b0d10; }
+#queue-list li.done { color:var(--dim); }
+#queue-list .score { color:var(--warn); margin-right:6px; }
+main { flex:1; display:flex; flex-direction:column; overflow:auto; padding:8px; gap:8px; }
+#stage { position:relative; flex:none; }
+canvas { display:block; background:#000; cursor:crosshair; }
+#mode-badge {
+  position:absolute; top:8px; right:8px;
+  padding:4px 10px; border-radius:4px;
+  font-weight:600; letter-spacing:.05em;
+  background:#1a9c6e; color:#fff; /* add: 緑 */
+  pointer-events:none;
+}
+#mode-badge.delete { background:#d14343; } /* delete: 赤 */
+#hud { display:flex; gap:16px; flex-wrap:wrap; color:var(--dim); }
+#hud span { white-space:nowrap; }
+#hud-msg { color:var(--warn); }
+#help { color:var(--dim); }
+#help ul { margin:4px 0 0 0; padding-left:18px; columns:2; }

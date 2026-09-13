@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>経路ラベル アノテーション</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <aside id="queue"><h2>キュー</h2><ol id="queue-list"></ol></aside>
+  <main>
+    <div id="stage">
+      <canvas id="canvas" width="1280" height="768"></canvas>
+      <div id="mode-badge">ADD</div>
+    </div>
+    <div id="hud">
+      <span id="hud-name">—</span>
+      <span id="hud-class">class: —</span>
+      <span id="hud-entry">entry: —</span>
+      <span id="hud-k">K: 3</span>
+      <span id="hud-n">伝播N: 5</span>
+      <span id="hud-anchor">始点: —</span>
+      <span id="hud-progress">—</span>
+      <span id="hud-msg"></span>
+    </div>
+    <details id="help"><summary>キーバインド</summary>
+      <ul>
+        <li>ドラッグ: 制御点を動かす</li>
+        <li>← →: 前/次フレーム、Enter: 確認済みにして次へ</li>
+        <li>h l / Shift+h Shift+l: 全体を左右に 1px / 5px</li>
+        <li>j k: 傾き（下端固定で上端を左右）</li>
+        <li>1 2 3: class を straight / left / right</li>
+        <li>d: add / delete モードの切替（既定 add、右上に表示。行 0〜24 は編集不可）</li>
+        <li>行をクリック: add では点を置く（既にあれば位置更新）／ delete では点を消す。操作した行が始点になる</li>
+        <li>Shift+クリック: 始点〜その行を add では直線補間、delete ではまとめて削除（両端含む）</li>
+        <li>始点（範囲操作の輪／×印）は次でクリア（解除）される: フレーム移動、Tab、d（モード切替）、
+          n / x（エントリ追加・削除）、undo / redo、Shift+クリックの実行後</li>
+        <li>n / x / Tab: エントリ追加 / 削除 / 切替</li>
+        <li>p: 前後 ±N へ伝播、, .: 伝播幅 N を増減</li>
+        <li>[ ]: 制御点数 K を増減</li>
+        <li>R: 制御点から曲線を再生成</li>
+        <li>u / Ctrl+u: undo / redo</li>
+      </ul>
+    </details>
+  </main>
+  <script src="/static/geom.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
