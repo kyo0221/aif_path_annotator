@@ -150,6 +150,8 @@ class LabelStore:
 
     def save(self, split, name, label):
         validate_label(label)
+        # labels/<split>/ はツールが生成するので、無ければここで作る。
+        (self.root / "labels" / split).mkdir(parents=True, exist_ok=True)
         _atomic_write_json(self.label_path(split, name), label)
         self._update_frame_state(split, name, edited=True)
 
@@ -161,11 +163,13 @@ class LabelStore:
     def ensure_backup(self):
         """labels/ の複製が無ければ作る。作ったら True、既にあれば False。
 
+        labels/ が無いデータセット(ツールが生成する前)ではバックアップ対象が
+        無いので何もせず False を返す。
         コピー途中で落ちても中途半端な labels_backup/ を残さないよう、
         一時ディレクトリへコピーしてから rename で確定する。
         """
         dst = self.backup_dir()
-        if dst.exists():
+        if dst.exists() or not (self.root / "labels").is_dir():
             return False
         tmp = tempfile.mkdtemp(dir=str(self.root), prefix=".labels_backup-")
         staging = Path(tmp) / "labels"

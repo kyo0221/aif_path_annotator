@@ -44,3 +44,25 @@ def test_frames_listed_from_images(tmp_path):
     assert s.frames("train") == ["a", "b"]
     assert s.has_label("train", "a") is True
     assert s.has_label("train", "b") is False
+
+
+def test_ensure_backup_without_labels_dir(tmp_path):
+    (tmp_path / "images" / "train").mkdir(parents=True)
+    (tmp_path / "images" / "train" / "a.png").write_bytes(b"\0")
+    store = LabelStore(tmp_path)
+    assert store.ensure_backup() is False
+    assert not (tmp_path / "labels_backup").exists()
+
+
+def test_save_creates_labels_dir(tmp_path):
+    (tmp_path / "images" / "train").mkdir(parents=True)
+    (tmp_path / "images" / "train" / "a.png").write_bytes(b"\0")
+    store = LabelStore(tmp_path)
+    label = [{
+        "class": "straight",
+        "xp": [0.0] * ROW_START + [0.5] * (N_ROWS - ROW_START),
+        "h_vector": [0] * ROW_START + [1] * (N_ROWS - ROW_START),
+    }]
+    store.save("train", "a", label)
+    assert (tmp_path / "labels" / "train" / "a.txt").exists()
+    assert store.load("train", "a") == label
