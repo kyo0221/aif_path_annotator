@@ -48,10 +48,15 @@ def main(argv=None):
     ap.add_argument("--weights", help="推論に使う重みファイル。指定するとキューを既存ラベルとの乖離順にする")
     ap.add_argument("--learning-repo", help="ネットワーク実装のあるリポジトリ（--weights と併用）")
     ap.add_argument("--branch-threshold", type=float, default=60.0, help="分岐を出す最小の横差(px)")
+    ap.add_argument("--vectormap", help="vectormap(.osm)。指定すると GNSS+俯瞰照合で straight 経路を作る機能(v キー/地図ボタン)を有効にする")
+    ap.add_argument("--yolop", help="YOLOP の TorchScript 重み（--vectormap と併用）")
+    ap.add_argument("--params", help="カメラ外部パラメータの main_params.yaml（--vectormap と併用）")
     args = ap.parse_args(argv)
 
     if args.weights and not args.learning_repo:
         ap.error("--weights を指定する場合は --learning-repo も指定してください")
+    if args.vectormap and not (args.yolop and args.params and args.learning_repo):
+        ap.error("--vectormap を指定する場合は --yolop / --params / --learning-repo も指定してください")
 
     root = Path(args.root).resolve()
     if not (root / "labels").is_dir():
@@ -76,9 +81,15 @@ def main(argv=None):
             args.weights, args.learning_repo, branch_threshold=args.branch_threshold
         )
 
+    matcher = None
+    if args.vectormap:
+        from tools.path_annotator.vectormap_match import VectormapMatcher  # noqa: E402
+
+        matcher = VectormapMatcher(root, args.vectormap, args.yolop, args.params, args.learning_repo)
+
     print(f"データセット: {root}")
     try:
-        srv = make_server(root, args.port, inferencer=inferencer)
+        srv = make_server(root, args.port, inferencer=inferencer, matcher=matcher)
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise

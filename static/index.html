@@ -12,6 +12,7 @@
       <canvas id="canvas" width="1280" height="768"></canvas>
       <div id="mode-badge">ADD</div>
       <button id="autolabel-btn" type="button">自動</button>
+      <button id="vectormap-btn" type="button">地図</button>
     </div>
     <div id="hud">
       <span id="hud-name">—</span>
@@ -32,6 +33,7 @@
         <li>1 2 3: class を straight / left / right</li>
         <li>d: add / delete モードの切替（既定 add、右上に表示。行 0〜24 は編集不可）</li>
         <li>a / 自動ボタン: 重みファイルがあれば、このフレームを推論したラベルで丸ごと置き換える（undo 可）</li>
+        <li>v / 地図ボタン: --vectormap 指定時、GNSS と白線の俯瞰照合で補正した位置から vectormap のレーン中央を投影し、straight だけを置き換える（undo 可。照合の補正量と信頼度を下に表示）</li>
         <li>行をクリック: add では点を置く（既にあれば位置更新）／ delete では点を消す。操作した行が始点になる</li>
         <li>Shift+クリック: 始点〜その行を add では直線補間、delete ではまとめて削除（両端含む）</li>
         <li>始点（範囲操作の輪／×印）は次でクリア（解除）される: フレーム移動、Tab、d（モード切替）、

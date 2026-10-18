@@ -1,8 +1,9 @@
 """アノテーションツールの HTTP API。標準ライブラリのみで動く。
 
-推論（tools.path_annotator.infer）は torch と別リポジトリの学習コードに依存するため、
-ここでは無条件 import しない。inferencer を使う経路（キューの乖離順並べ替え・
-/api/autolabel）でだけ、呼び出し側から渡された Inferencer インスタンスを使う。
+推論（tools.path_annotator.infer）と vectormap 照合（tools.path_annotator.vectormap_match）は
+torch と別リポジトリの学習コードに依存するため、ここでは無条件 import しない。inferencer を使う経路
+（キューの乖離順並べ替え・/api/autolabel）と matcher を使う経路（/api/vectormap）でだけ、
+呼び出し側から渡されたインスタンスを使う。
 """
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,10 +25,11 @@ ROW_START = curve.ROW_START
 class Annotator:
     """ストアとキュー（スコア順フレーム一覧）を束ねる。"""
 
-    def __init__(self, root, inferencer=None):
+    def __init__(self, root, inferencer=None, matcher=None):
         self.store = LabelStore(root)
         self.store.ensure_backup()
         self.inferencer = inferencer
+        self.matcher = matcher
         self._queue = None
         self._bags = {}  # split -> (bag名 -> 連番順のフレーム名リスト)
 
@@ -85,6 +87,12 @@ class Annotator:
         if self.inferencer is None:
             raise ValueError("重みファイルが指定されていません")
         return self.inferencer.predict(self.store.image_path(split, name))
+
+    def vectormap(self, split, name):
+        """GNSS + 俯瞰照合 + vectormap で straight 経路を作る。保存はせず {label, info} を返す。"""
+        if self.matcher is None:
+            raise ValueError("--vectormap が指定されていません")
+        return self.matcher.match(split, name, self.store.image_path(split, name))
 
     def bags(self, split):
         """split の bag グルーピング。フレーム表示のたび 2 万件を走査しないようキャッシュする。"""
@@ -351,6 +359,8 @@ def make_handler(app):
                 if path == "/api/autolabel":
                     label = app.autolabel(payload["split"], payload["name"])
                     return self._json({"label": label})
+                if path == "/api/vectormap":
+                    return self._json(app.vectormap(payload["split"], payload["name"]))
             except ValueError as e:
                 return self._error(400, str(e))
             except (KeyError, TypeError, FileNotFoundError) as e:
@@ -411,7 +421,7 @@ def make_handler(app):
     return Handler
 
 
-def make_server(root, port=8765, inferencer=None):
+def make_server(root, port=8765, inferencer=None, matcher=None):
     """127.0.0.1 にだけバインドしたサーバを返す（serve_forever は呼び出し側で）。"""
-    app = Annotator(root, inferencer=inferencer)
+    app = Annotator(root, inferencer=inferencer, matcher=matcher)
     return ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))

@@ -6,6 +6,7 @@
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
   const autolabelBtn = document.getElementById('autolabel-btn');
+  const vectormapBtn = document.getElementById('vectormap-btn');
   const COLORS = { straight: '#ff4d4d', left: '#4dff88', right: '#4da3ff' };
   // style.css の #mode-badge（ADD）/ #mode-badge.delete（DELETE）と同じ値。
   // バッジと始点マーカーの色をここ一箇所にまとめる（CSS とは値を手で合わせるだけで、
@@ -277,6 +278,38 @@
 
   autolabelBtn.addEventListener('click', () => autolabel());
 
+  // --- vectormap 照合（GNSS + 白線の俯瞰照合で補正した位置から、レーン中央の straight を作る） ---
+
+  // autolabel と同じ流れだが、置き換えるのは straight エントリだけ（left/right は残す）。
+  function vectormapLabel() {
+    return enqueue(async () => {
+      if (!S.label) return;
+      const epoch = S.epoch;
+      let body;
+      try {
+        body = await api.send('/api/vectormap', { split: S.split, name: S.name }, 'POST');
+      } catch (e) {
+        return msg(`vectormap 照合に失敗: ${e.message}`);
+      }
+      if (S.epoch !== epoch) return;
+      snapshot();
+      const straight = body.label.filter((e) => e.class === 'straight');
+      S.label = straight.concat(S.label.filter((e) => e.class !== 'straight'));
+      S.baseXp = S.label.map((e) => e.xp.slice());
+      S.baseH = S.label.map((e) => e.h_vector.slice());
+      S.entry = 0;
+      S.epoch += 1;
+      await fetchControlRows();
+      const i = body.info;
+      msg(`地図照合: 横${i.lateral_m >= 0 ? '+' : ''}${i.lateral_m}m 前後${i.longitudinal_m}m ヨー${i.yaw_deg}° ` +
+          `コスト${i.cost_before}→${i.cost_after}${i.reliable ? '' : '（照合不良: 要確認）'}`);
+      refreshHud(); draw();
+      return save();
+    });
+  }
+
+  vectormapBtn.addEventListener('click', () => vectormapLabel());
+
   // --- マウス操作 ---
 
   function canvasPos(ev) {
@@ -451,6 +484,7 @@
       return;
     }
     if (lower === 'a') return autolabel();
+    if (lower === 'v') return vectormapLabel();
     if (k === '1' || k === '2' || k === '3') {
       const next = { 1: 'straight', 2: 'left', 3: 'right' }[k];
       if (cur().class === next) return;
