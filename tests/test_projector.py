@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from tools.path_annotator.pose import make_pose
 from tools.path_annotator.store import ROW_START, validate_label
@@ -72,3 +73,47 @@ def test_label_three_classes_48_rows(projector):
     for entry in label:
         assert len(entry["xp"]) == 48 and len(entry["h_vector"]) == 48
     validate_label(label)
+
+
+# straight.osm のレーン ID: A (x 0→30 の本線) = 9001、E (x=15 で道路を横切る) = 9008
+LANE_A, LANE_E = 9001, 9008
+
+
+def test_lane_candidates_prefers_aligned(projector):
+    lanes = projector.lane_candidates(make_pose(14.5, 0.3, 0))
+    assert lanes[0]["id"] == LANE_A and lanes[0]["aligned"] and lanes[0]["distance_m"] < 0.5
+    e = next(lane for lane in lanes if lane["id"] == LANE_E)
+    assert not e["aligned"] and 85 <= e["angle_deg"] <= 95
+
+
+def test_auto_lanelet_ignores_crossing_lane(projector):
+    assert projector.auto_lanelet(make_pose(15, 0, 0)) == LANE_A
+
+
+def test_lane_candidates_includes_requested_far_lane(projector):
+    assert LANE_E in [lane["id"] for lane in projector.lane_candidates(make_pose(5, 0, 0), LANE_E)]
+
+
+def test_lane_candidates_unknown_id(projector):
+    with pytest.raises(ValueError):
+        projector.lane_candidates(POSE, 999999)
+
+
+def test_paths_from_requested_lane(projector):
+    pts = projector.paths(make_pose(14.5, 0, 0), LANE_E)["straight"]
+    assert (np.abs(pts[:, 0] - 15) < 0.01).all() and (np.diff(pts[:, 1]) > 0).all()
+
+
+def test_label_with_lanelet_validates(projector):
+    pose = make_pose(15, 0, 0)
+    for entry in projector.label(pose, LANE_E):  # E は横向きなので有効行 0 で [] のこともある
+        validate_label([entry])
+    assert projector.resolve_lane(pose, LANE_E)["angle_deg"] >= 60
+
+
+def test_bev_has_lanes(projector):
+    pose = make_pose(14.5, 0, 0)
+    lanes = projector.bev(pose, [[3.0, 0.0]], LANE_E)["lanes"]
+    assert {LANE_A, LANE_E} <= {lane["id"] for lane in lanes}
+    pts = np.array([p for lane in lanes for p in lane["points"]])
+    assert ((pts[:, 0] >= -4) & (pts[:, 0] <= 28) & (np.abs(pts[:, 1]) <= 13)).all()

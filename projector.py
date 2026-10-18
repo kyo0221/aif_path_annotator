@@ -25,6 +25,10 @@ BEV_Y_WINDOW = 13.0
 PITCH_QUANTUM = 0.1
 STEP = 0.2
 CLASSES = ("straight", "left", "right")
+LANE_SEARCH_RADIUS = 8.0   # レーン候補に挙げる中心線までの距離 [m]
+LANE_ALIGN_DEG = 60.0      # 進行方向とレーン接線がこの角度以内なら「向きが合う」
+LANE_MAX = 6               # 候補の最大数
+LANE_AUTO_DISTANCE = 5.0   # 自動選択で許す中心線までの距離 [m]
 
 
 def to_vehicle(points_map, pose):
@@ -66,7 +70,9 @@ def _pieces(points, mask):
 
 
 class Projector:
-    def __init__(self, camera, vector_map, polylines, trace_paths, row_anchor_columns):
+    def __init__(self, camera, vector_map, polylines, trace_paths, row_anchor_columns,
+                 vectormap_module=None):
+        self._vm = vectormap_module
         self.camera = camera
         self.vector_map = vector_map
         self.polylines = polylines
@@ -81,8 +87,79 @@ class Projector:
             self._cameras[key] = self.camera if key == 0 else tilted_camera(self.camera, key * PITCH_QUANTUM)
         return self._cameras[key]
 
-    def paths(self, pose):
-        paths = self._trace_paths(self.vector_map, (pose["x"], pose["y"]), pose["yaw"], HORIZON)
+    def _lane_info(self, lane_id, pose):
+        """レーン lane_id の中心線までの距離・接線と進行方向のなす角。中心線が使えなければ None。"""
+        hit = self._vm._nearest_point_on_polyline(self.vector_map.centerlines[lane_id], (pose["x"], pose["y"]))
+        if hit is None:
+            return None
+        distance, _, _, tangent = hit
+        heading = np.array([math.cos(pose["yaw"]), math.sin(pose["yaw"])])
+        cos = float(np.clip(np.dot(tangent, heading), -1.0, 1.0))
+        angle = math.degrees(math.acos(cos))
+        return {"id": int(lane_id), "distance_m": float(distance), "angle_deg": angle,
+                "aligned": bool(angle <= LANE_ALIGN_DEG)}
+
+    def lane_candidates(self, pose, lanelet=None):
+        """姿勢の周り（8 m 以内）のレーン候補。向きが合うものを距離順 → 残りを距離順、先頭 6 件。
+
+        lanelet が指定され一覧に無ければ（半径外でも）末尾に足す。存在しない ID は ValueError。
+        """
+        if self._vm is None:
+            return []
+        if lanelet is not None and lanelet not in self.vector_map.centerlines:
+            raise ValueError(f"lanelet {lanelet} がありません")
+        infos = [self._lane_info(lane_id, pose) for lane_id in self.vector_map.centerlines]
+        near = sorted((i for i in infos if i is not None and i["distance_m"] <= LANE_SEARCH_RADIUS),
+                      key=lambda i: i["distance_m"])
+        lanes = ([i for i in near if i["aligned"]] + [i for i in near if not i["aligned"]])[:LANE_MAX]
+        if lanelet is not None and all(lane["id"] != lanelet for lane in lanes):
+            extra = self._lane_info(lanelet, pose)
+            if extra is not None:
+                lanes.append(extra)
+        return lanes
+
+    def auto_lanelet(self, pose):
+        """向きが合い（60° 以内）5 m 以内で最も近いレーンの ID。無ければ None（従来の trace_paths 任せ）。"""
+        for lane in self.lane_candidates(pose):
+            if lane["aligned"] and lane["distance_m"] <= LANE_AUTO_DISTANCE:
+                return lane["id"]
+        return None
+
+    def resolve_lane(self, pose, lanelet=None):
+        """実際に経路の起点にするレーン {id, auto, distance_m, angle_deg}。決まらなければ id=None。"""
+        lane_id = self.auto_lanelet(pose) if lanelet is None else lanelet
+        info = None if lane_id is None else self._lane_info(lane_id, pose)
+        return {"id": None if info is None else info["id"], "auto": lanelet is None,
+                "distance_m": None if info is None else info["distance_m"],
+                "angle_deg": None if info is None else info["angle_deg"]}
+
+    def _trace_from(self, lanelet_id, pose):
+        """指定レーンの最近傍点から経路を辿る。vectormap.trace_paths の locate_lanelet 以降と同じ手順。"""
+        vm, vector_map, position = self._vm, self.vector_map, (pose["x"], pose["y"])
+        polyline = vector_map.centerlines[lanelet_id]
+        _, _, index, _ = vm._nearest_point_on_polyline(polyline, position)
+        start_point, next_index = vm._project_onto_polyline(polyline, index, position)
+        trunk, remaining, terminal, visited = vm._walk(vector_map, lanelet_id, start_point, next_index, HORIZON)
+        successors = [c for c in vector_map.connections.get(terminal, []) if c[0] not in visited]
+        if remaining <= 0.0 or len(successors) < 2:
+            return {"straight": trunk}
+        paths = {}
+        for to_id, turn in successors:
+            if turn not in vm.SLOT_NAMES:
+                continue
+            branch_polyline = vector_map.centerlines[to_id]
+            branch, _, _, _ = vm._walk(vector_map, to_id, branch_polyline[0], 1, remaining)
+            merged = vm._drop_consecutive_duplicates(np.vstack([trunk, branch]))
+            if turn not in paths or len(merged) > len(paths[turn]):
+                paths[turn] = merged
+        return paths or {"straight": trunk}
+
+    def paths(self, pose, lanelet=None):
+        lane_id = self.resolve_lane(pose, lanelet)["id"] if self._vm is not None else None
+        if lane_id is not None:
+            paths = self._trace_from(lane_id, pose)
+        else:
+            paths = self._trace_paths(self.vector_map, (pose["x"], pose["y"]), pose["yaw"], HORIZON)
         return {cls: np.asarray(paths[cls], float) for cls in CLASSES if cls in paths}
 
     def project_polyline(self, poly_map, pose):
@@ -114,12 +191,12 @@ class Projector:
                 rows[cls] = entry
         return rows
 
-    def label(self, pose):
-        rows = self._label_rows(self.paths(pose), pose)
+    def label(self, pose, lanelet=None):
+        rows = self._label_rows(self.paths(pose, lanelet), pose)
         return [{"class": cls, **rows[cls]} for cls in CLASSES if cls in rows]
 
-    def overlay(self, pose):
-        paths = self.paths(pose)
+    def overlay(self, pose, lanelet=None):
+        paths = self.paths(pose, lanelet)
         lines = [piece for poly in self.polylines for piece in self.project_polyline(poly, pose)]
         return {"lines": lines, "paths": self._longest(paths, lambda p: self.project_polyline(p, pose)),
                 "rows": self._label_rows(paths, pose)}
@@ -164,19 +241,24 @@ class Projector:
               & (np.abs(local[:, 1]) <= BEV_Y_WINDOW))
         return _pieces(local, ok)
 
-    def bev(self, pose, points):
-        paths = self.paths(pose)
+    def bev(self, pose, points, lanelet=None):
+        paths = self.paths(pose, lanelet)
+        lanes = [{"id": lane["id"], "points": piece}
+                 for lane in self.lane_candidates(pose, lanelet)
+                 for piece in self._bev_pieces(self.vector_map.centerlines[lane["id"]], pose)]
         return {
             "lines": [piece for poly in self.polylines for piece in self._bev_pieces(poly, pose)],
             "paths": self._longest(paths, lambda p: self._bev_pieces(p, pose)),
             "points": np.asarray(points, float).reshape(-1, 2).tolist(),
+            "lanes": lanes,
         }
 
 
 def load_projector(learning_repo, params_path, osm_path):
     sys.path.insert(0, str(learning_repo))
     from Models.data_utils.vision_planner.projection import load_camera, row_anchor_columns
+    from Models.data_utils.vision_planner import vectormap
     from Models.data_utils.vision_planner.vectormap import load_vector_map, trace_paths
 
     return Projector(load_camera(str(params_path), "nHD", H, W), load_vector_map(str(osm_path)),
-                     observable_polylines(osm_path), trace_paths, row_anchor_columns)
+                     observable_polylines(osm_path), trace_paths, row_anchor_columns, vectormap)

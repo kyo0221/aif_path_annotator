@@ -31,6 +31,9 @@
   <node id="29" visible="true" version="1" x="34" y="-1.5" z="0.0"/>
   <node id="30" visible="true" version="1" x="35.5" y="-3.5" z="0.0"/>
   <node id="31" visible="true" version="1" x="36" y="-6" z="0.0"/>
+  <node id="32" visible="true" version="1" x="15" y="-10" z="0.0"/>
+  <node id="33" visible="true" version="1" x="15" y="0" z="0.0"/>
+  <node id="34" visible="true" version="1" x="15" y="10" z="0.0"/>
   <way id="1007" visible="true" version="1">
     <nd ref="4"/>
     <nd ref="5"/>
@@ -83,6 +86,12 @@
     <nd ref="31"/>
     <tag k="type" v="centerline"/>
   </way>
+  <way id="1032" visible="true" version="1">
+    <nd ref="32"/>
+    <nd ref="33"/>
+    <nd ref="34"/>
+    <tag k="type" v="centerline"/>
+  </way>
   <relation id="9001" visible="true" version="1">
     <member type="way" role="centerline" ref="1007"/>
     <tag k="type" v="lanelet"/>
@@ -116,5 +125,9 @@
     <member type="relation" role="to" ref="9005"/>
     <tag k="type" v="lane_connection"/>
     <tag k="turn_direction" v="right"/>
+  </relation>
+  <relation id="9008" visible="true" version="1">
+    <member type="way" role="centerline" ref="1032"/>
+    <tag k="type" v="lanelet"/>
   </relation>
 </osm>
