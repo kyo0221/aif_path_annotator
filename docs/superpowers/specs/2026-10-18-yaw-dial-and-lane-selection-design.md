@@ -45,7 +45,7 @@
 - `flags` に `lane` を足す: 使っているレーン（自動または指定）の `angle_deg ≥ 60`、または `auto_lanelet` が `None` で `trace_paths` に落ちたとき。
 - API:
   - `GET /api/frame` の応答に `lanelet`（現在の選択、null = 自動）、`lanes`（`lane_candidates` に `selected: bool`、`auto: bool` を足したもの）を加える。
-  - `POST /api/preview`、`/api/pose`、`/api/confirm`、`/api/match` の body に任意項目 `lanelet`（int | null）を加える。省略時は保存済みの選択（無ければ自動）。
+  - `POST /api/preview`、`/api/pose`、`/api/confirm`、`/api/match` の body に任意項目 `lanelet`（int | null）を加える。省略時は null と同じ = 自動（ページは常に送る。サーバは省略と null を区別しない）。
   - `/api/preview` の応答にも `lanelet`（実際に使ったレーン ID。自動のときは自動で選ばれた ID）と `lanes` を含める。
     一覧の距離・角度・自動レーンは姿勢で変わるので、姿勢を動かすたびにプレビューで更新する（全 lanelet の最近傍点計算は数十レーン分の小さなループで、プレビューの予算内に収まる）。
     `/api/pose` は `{"ok": true}` のまま、`/api/match` は従来の形のまま（直後のプレビューで一覧が更新される）。

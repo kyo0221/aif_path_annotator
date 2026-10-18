@@ -129,3 +129,23 @@ def test_bev_has_lanes(projector):
     assert {LANE_A, LANE_E} <= {lane["id"] for lane in lanes}
     pts = np.array([p for lane in lanes for p in lane["points"]])
     assert ((pts[:, 0] >= -4) & (pts[:, 0] <= 28) & (np.abs(pts[:, 1]) <= 13)).all()
+
+
+def test_lane_candidates_empty_far_from_map(projector):
+    pose = make_pose(5, 50, 0)
+    assert projector.lane_candidates(pose) == []
+    assert projector.auto_lanelet(pose) is None
+    assert projector.resolve_lane(pose)["id"] is None
+    projector.label(pose)  # 例外にならないこと
+
+
+def test_resolve_lane_without_vectormap_module(projector):
+    from tools.path_annotator.projector import Projector
+
+    bare = Projector(projector.camera, projector.vector_map, projector.polylines,
+                     projector._trace_paths, projector._row_anchor_columns)
+    pose = make_pose(14.5, 0.3, 0)
+    with pytest.raises(ValueError):
+        bare.resolve_lane(pose, lanelet=1)
+    assert bare.lane_candidates(pose) == []
+    assert bare.auto_lanelet(pose) is None

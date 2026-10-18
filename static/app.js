@@ -284,7 +284,7 @@
       li.onclick = () => { if (S.frame) setLane(id); };
       ol.appendChild(li);
     };
-    row(auto ? `自動（#${auto.id}）` : '自動（なし）', null, false);
+    row(auto ? `自動（#${auto.id}）` : '自動（従来規則）', null, false);
     S.lanes.forEach((l) => {
       row(`#${l.id}  ${l.distance_m.toFixed(1)} m  ${l.angle_deg.toFixed(0)}°`, l.id, l.aligned === false);
     });
@@ -329,7 +329,7 @@
       msg(`フレームの読み込みに失敗: ${e.message}`);
       return;
     }
-    msg('');
+    msg(f.lane_note || '');
     S.frame = f;
     S.pose = f.pose;
     S.source = f.source;

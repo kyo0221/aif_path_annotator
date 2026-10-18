@@ -132,6 +132,8 @@ class Projector:
     def resolve_lane(self, pose, lanelet=None):
         """実際に経路の起点にするレーン {id, auto, distance_m, angle_deg}。決まらなければ id=None。"""
         if lanelet is not None:
+            if self._vm is None:
+                raise ValueError("レーン指定にはベクターマップモジュールが必要です")
             self._check_lanelet(lanelet)
         lane_id = self.auto_lanelet(pose) if lanelet is None else lanelet
         info = None if lane_id is None else self._lane_info(lane_id, pose)

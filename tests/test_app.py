@@ -187,3 +187,11 @@ def test_preview_reads_mask_once(make_annotator):
     Counting.calls = 0
     a.preview("train", "f000000", r["pose"])
     assert Counting.calls <= 1
+
+
+def test_open_frame_tolerates_stale_lanelet(annotator):
+    r = annotator.open_frame("train", "f000000")
+    annotator.poses.set("train", "f000000", r["pose"], r["source"], r["cost"], r["flags"], r["init"], lanelet=999)
+    r2 = annotator.open_frame("train", "f000000")
+    assert r2["lanelet"] is None
+    assert "999" in r2["lane_note"]

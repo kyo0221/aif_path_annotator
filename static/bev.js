@@ -131,7 +131,11 @@
       if (handlers.onDragStart) handlers.onDragStart();
     });
     // canvas の外へ出ても追えるように window で受ける。
-    window.addEventListener('mousemove', (ev) => { if (drag) emit(ev); });
+    window.addEventListener('mousemove', (ev) => {
+      if (!drag) return;
+      if (!(ev.buttons & 1)) { drag = null; return; } // ボタンが離れていたらドラッグ終了
+      emit(ev);
+    });
     window.addEventListener('mouseup', (ev) => {
       if (!drag) return;
       emit(ev);

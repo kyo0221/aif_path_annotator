@@ -214,7 +214,13 @@ class Annotator:
         cache = {"done": 0, "total": 0}
         if self.prefetcher is not None:
             cache = dict(zip(("done", "total"), self.prefetcher.progress()))
-        lanelet = entry["lanelet"]
+        lanelet, lane_note = entry["lanelet"], None
+        if lanelet is not None:
+            try:
+                self.projector.resolve_lane(pose, lanelet)
+            except ValueError:  # 保存済みのレーンが地図に無い: この回は自動で開く
+                lane_note = f"保存されたレーン #{lanelet} は地図に無いので自動に戻しました"
+                lanelet = None
         return {
             "split": split, "name": name, "index": self.frames.position(split, name),
             "total": len(self.frames), "status": self.store.get_status(split, name),
@@ -224,7 +230,7 @@ class Annotator:
             "label": self.projector.label(pose, lanelet), "candidates": shown,
             "lanelet": lanelet, "lanes": self._lanes(pose, lanelet),
             "prev": _ref(self.frames.prev(split, name)), "next": _ref(self.frames.next(split, name)),
-            "cache": cache,
+            "cache": cache, "lane_note": lane_note,
         }
 
     def preview(self, split, name, pose, lanelet=None):
