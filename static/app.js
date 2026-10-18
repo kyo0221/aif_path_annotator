@@ -147,6 +147,21 @@
     bevPanel.draw(S.view.bev);
   }
 
+  // ヨー調整ダイヤル（dial.js）。俯瞰のドラッグと同じく 1 回のドラッグで undo 1 つ。
+  let dialPanel = null;
+  function drawDial(yawDeg) {
+    if (!window.Dial) return;
+    if (!dialPanel) {
+      dialPanel = window.Dial.create($('dial'), {
+        onTurnStart: () => { if (S.frame) pushUndo(); },
+        onTurn: (dYawDeg) => { if (S.frame) applyPose(shiftPose(S.pose, 0, 0, dYawDeg, 0), 'manual'); },
+        // ヨーだけを初期値へ戻す（横・前後・ピッチはそのまま）。
+        onReset: () => { if (S.frame) setPose({ ...S.pose, yaw: S.frame.init.pose.yaw }, 'manual'); },
+      });
+    }
+    dialPanel.draw(yawDeg);
+  }
+
   function setPpm(dir) {
     bevPanel.setPpm(bevPanel.ppm + dir * 2);
   }
@@ -229,6 +244,7 @@
     (S.view.label || []).forEach((e) => { rows[e.class] = e.h_vector.reduce((a, b) => a + b, 0); });
     $('hud-rows').textContent = CLASSES.map((c) => `${c} ${rows[c] === undefined ? '—' : rows[c]}`).join(' / ');
     $('hud-source').textContent = `${S.source}（初期値 ${f.init.source}）`;
+    drawDial(d.yawDeg);
   }
 
   function renderQueue() {
@@ -534,7 +550,8 @@
   // 1: 姿勢キー・undo/redo・表示切替、2: Enter で確定して次へ、3: 確定できない姿勢で Enter（400）、
   // 4: 不透明度を変えて保存（再読み込みで保たれるかの確認用）、
   // 5: 俯瞰のドラッグ・ホイール・候補 2 の選択、6: 5 に続けて r で再探索・+ で縮尺を上げる、
-  // 7: ← で前のフレームへ移って候補の枚数を見る。
+  // 7: ← で前のフレームへ移って候補の枚数を見る、
+  // 8: ヨー調整ダイヤルのドラッグ（時計回り 90°・±180° をまたぐ）とダブルクリック。
 
   async function selftest(mode) {
     const key = (type, k, shiftKey = false) => window.dispatchEvent(new KeyboardEvent(type, { key: k, shiftKey }));
@@ -561,6 +578,57 @@
     }
     const hud = () => $('hud-correction').textContent.replace('\n', ' / ');
     const out = [`start: ${hud()}`];
+    if (mode === 8) {
+      key('keydown', 'Escape'); await idle(); // 初期値から始める
+      out.push(`Esc: ${hud()}`);
+      const dial = $('dial');
+      const r = dial.getBoundingClientRect();
+      const R = 40; // 中心からの半径 [px]
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      // canvas 座標の角度 deg（右が 0°・時計回りが +）の点。MouseEvent の clientX/Y は整数に丸められるので
+      // 先に丸め、期待値もその丸めた点の角度から出す。
+      const pt = (deg) => [Math.round(cx + R * Math.cos(deg * DEG)), Math.round(cy + R * Math.sin(deg * DEG))];
+      const ang = (deg) => { const [x, y] = pt(deg); return Math.atan2(y - cy, x - cx); };
+      const at = (type, deg, target = window, shiftKey = false) => {
+        const [clientX, clientY] = pt(deg);
+        target.dispatchEvent(new MouseEvent(type, { clientX, clientY, button: 0, shiftKey, bubbles: true }));
+      };
+      // 期待されるヨーの変化 [deg]（各刻みの短い弧の和 × −0.1 × 倍率）。
+      const expect = (degs, gain = 1) => degs.slice(1).reduce(
+        (sum, d, i) => sum - (wrap(ang(d) - ang(degs[i])) / DEG) * window.Dial.DEG_PER_DIAL_DEG * gain, 0);
+      const yaw = () => poseDelta(S.pose, S.frame.init.pose).yawDeg;
+      const drag = async (degs, shiftKey = false) => {
+        at('mousedown', degs[0], dial);
+        degs.slice(1).forEach((d) => at('mousemove', d, window, shiftKey));
+        at('mouseup', degs[degs.length - 1], window, shiftKey);
+        await wait(100); await idle();
+      };
+      // (a) 上（−90°）から右（0°）へ時計回りに 90°（10° 刻み）→ ヨー −90·0.1 = −9.0°
+      let undo0 = S.undo.length;
+      const pa = [-90, -80, -70, -60, -50, -40, -30, -20, -10, 0];
+      await drag(pa);
+      out.push(`(a) 時計回り 90°: 期待 ${expect(pa).toFixed(2)} / 実際 ${yaw().toFixed(2)}；${hud()} src=${S.source} undo+${S.undo.length - undo0}`);
+      // (b) 170° → −170°（= 190°）: 時計回り 20° の短い弧 → 約 −2.0°。戻すと約 +2.0°（340° 分の ±34° にはならない）
+      const run = async (degs, shiftKey = false) => {
+        const y0 = yaw();
+        await drag(degs, shiftKey);
+        return `期待 ${expect(degs, shiftKey ? 5 : 1).toFixed(2)} / 実際 ${(yaw() - y0).toFixed(2)}`;
+      };
+      undo0 = S.undo.length;
+      out.push(`(b) 170→-170: ${await run([170, -170])}；-170→170: ${await run([-170, 170])} undo+${S.undo.length - undo0}`);
+      out.push(`    ${hud()}`);
+      // Shift: 時計回り 20° → 約 −2.0·5 = −10.0°
+      out.push(`Shift 時計回り 20°: ${await run([0, 20], true)}；${hud()}`);
+      // (c) ダブルクリックでヨーだけ初期値へ
+      undo0 = S.undo.length;
+      dial.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await idle();
+      out.push(`(c) dblclick: ${hud()} src=${S.source} undo+${S.undo.length - undo0}`);
+      // スクリーンショットで回った姿を見るため、最後に時計回り約 24°（約 −2.4°）にしておく
+      out.push(`最後: 時計回り 24° ${await run([-90, -78, -66])}；${hud()}`);
+      return msg(`SELFTEST 8\n${out.join('\n')}`);
+    }
     if (mode === 5 || mode === 6) {
       const bev = $('bev');
       const r = bev.getBoundingClientRect();

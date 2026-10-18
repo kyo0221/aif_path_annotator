@@ -35,6 +35,8 @@ body { margin:0; display:flex; flex-direction:column; background:var(--bg); colo
 #candidates { display:flex; gap:8px; padding:0 8px; min-height:20px; color:var(--dim); }
 #bev { cursor:grab; }
 #bev:active { cursor:grabbing; }
+#dial { display:block; flex:none; width:120px; height:120px; align-self:center; cursor:grab; }
+#dial:active { cursor:grabbing; }
 .cand { flex:none; width:204px; padding:1px; border:1px solid var(--line); cursor:pointer; background:var(--panel); }
 .cand:hover { border-color:var(--dim); }
 .cand.active { border:1px solid var(--accent); box-shadow:0 0 0 1px var(--accent); }
