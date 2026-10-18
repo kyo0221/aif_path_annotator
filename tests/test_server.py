@@ -121,3 +121,35 @@ def test_unknown_frame_is_400(mini_root, make_annotator):
     finally:
         _stop(srv, t)
     assert status == 400 and "error" in r
+
+
+def test_frame_has_lanes(server):
+    status, f = call(server, "GET", "/api/frame/train/f000000")
+    assert status == 200 and "lanes" in f and "lanelet" in f
+
+
+def test_preview_passes_lanelet(server):
+    body = {"split": "train", "name": "f000000", "pose": POSE, "lanelet": 2}
+    status, p = call(server, "POST", "/api/preview", body)
+    assert status == 200 and p["lanelet"] == 2 and "lane" in p["flags"]
+
+
+def test_preview_without_lanelet_is_auto(server):
+    body = {"split": "train", "name": "f000000", "pose": POSE}
+    status, p = call(server, "POST", "/api/preview", body)
+    assert status == 200 and p["lanelet"] == 1
+
+
+def test_unknown_lanelet_is_400(server):
+    body = {"split": "train", "name": "f000000", "pose": POSE, "lanelet": 999}
+    status, _ = call(server, "POST", "/api/preview", body)
+    assert status == 400
+
+
+def test_confirm_passes_lanelet(server, mini_root):
+    body = {"split": "train", "name": "f000000", "pose": POSE,
+            "source": "manual", "lanelet": 1}
+    status, _ = call(server, "POST", "/api/confirm", body)
+    assert status == 200
+    poses = json.loads((mini_root / "poses.json").read_text())
+    assert poses["frames"]["train/f000000"]["lanelet"] == 1

@@ -102,15 +102,17 @@ def make_handler(app):
             def route():
                 p = self._body()
                 split, name = p["split"], p["name"]
+                # 使用レーン（省略 = None = 自動）。未指定で保存済みレーンが自動に戻らないよう全経路で渡す
+                lanelet = p.get("lanelet")
                 if path == "/api/preview":
-                    out = app.preview(split, name, p["pose"])
+                    out = app.preview(split, name, p["pose"], lanelet)
                 elif path == "/api/match":
                     out = app.match(split, name, p["pose"], p["window"])
                 elif path == "/api/pose":
-                    app.set_pose(split, name, p["pose"], p["source"])
+                    app.set_pose(split, name, p["pose"], p["source"], lanelet)
                     out = {"ok": True}
                 elif path == "/api/confirm":
-                    out = app.confirm(split, name, p["pose"], p["source"])
+                    out = app.confirm(split, name, p["pose"], p["source"], lanelet)
                 else:
                     app.set_status(split, name, p["status"])
                     out = {"ok": True}
