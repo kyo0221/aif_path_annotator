@@ -160,9 +160,10 @@ class Annotator:
                 entry = self._initialize(split, name)
             return entry
 
-    def _evaluate(self, split, name, pose, init_pose, lanelet=None):
+    def _evaluate(self, split, name, pose, init_pose, lanelet=None, points=None):
         """(cost, flags, label, lane) を返す。lane は resolve_lane の結果。"""
-        points = self._points(split, name, pose["pitch"])
+        if points is None:
+            points = self._points(split, name, pose["pitch"])
         cost = matching.cost(self.field, points, pose) if len(points) >= MIN_POINTS else None
         label = self.projector.label(pose, lanelet)
         lane = self.projector.resolve_lane(pose, lanelet)
@@ -228,8 +229,8 @@ class Annotator:
 
     def preview(self, split, name, pose, lanelet=None):
         init_pose = self._entry(split, name)["init"]["pose"]
-        cost, flags, label, lane = self._evaluate(split, name, pose, init_pose, lanelet)
         points = self._points(split, name, pose["pitch"])
+        cost, flags, label, lane = self._evaluate(split, name, pose, init_pose, lanelet, points)
         return {"overlay": self.projector.overlay(pose, lanelet), "bev": self.projector.bev(pose, points, lanelet),
                 "cost": cost, "label": label, "flags": flags,
                 "lanelet": lane["id"], "lanes": self._lanes(pose, lanelet)}

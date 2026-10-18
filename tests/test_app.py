@@ -170,3 +170,20 @@ def test_unknown_lanelet_is_value_error(annotator):
     r = annotator.open_frame("train", "f000000")
     with pytest.raises(ValueError):
         annotator.preview("train", "f000000", r["pose"], lanelet=999)
+
+
+def test_preview_reads_mask_once(make_annotator):
+    from conftest import FakeDetector
+
+    class Counting(FakeDetector):
+        calls = 0
+
+        def mask(self, image_path, key):
+            Counting.calls += 1
+            return super().mask(image_path, key)
+
+    a = make_annotator(detector=Counting())
+    r = a.open_frame("train", "f000000")
+    Counting.calls = 0
+    a.preview("train", "f000000", r["pose"])
+    assert Counting.calls <= 1
