@@ -18,7 +18,7 @@
     source: null,   // /api/pose・/api/confirm に送る出どころ（手で動かしたら manual）
     view: null,     // 現在の姿勢に対する {overlay, bev, cost, label, flags}（frame か preview の応答）
     img: null, maskImg: null, scale: 1,
-    loading: false, // フレーム読み込み中は移動系のキーを受け付けない（二重確定を防ぐ）
+    busy: false,    // 確定・skip・移動の POST からフレーム読み込みまでの間は次の移動を受け付けない（二重確定を防ぐ）
   };
 
   const api = {
@@ -207,8 +207,6 @@
   }
 
   async function openFrame(ref) {
-    if (!ref) return msg('これ以上フレームがありません');
-    S.loading = true;
     let f;
     try {
       f = await api.get(`/api/frame/${ref.split}/${ref.name}`);
@@ -216,8 +214,6 @@
       // 前のフレームの表示・状態はそのまま保ち、失敗だけを出す。
       msg(`フレームの読み込みに失敗: ${e.message}`);
       return;
-    } finally {
-      S.loading = false;
     }
     msg('');
     S.frame = f;
@@ -290,22 +286,53 @@
   const savePose = () =>
     api.send('/api/pose', { split: S.frame.split, name: S.frame.name, pose: S.pose, source: S.source }, 'POST');
 
-  // 確定せずに別フレームへ移る。今の姿勢は保存しておく。
-  async function leaveTo(ref) {
-    if (S.loading) return;
-    if (!ref) return msg('これ以上フレームがありません');
+  const reloadQueue = () => loadQueue().catch((e) => msg(`キューの読み込みに失敗: ${e.message}`)); // flags・状態が変わりうる
+
+  // 移動系の操作は 1 つずつ。POST からフレーム読み込み・キュー更新までを通して busy にし、
+  // 応答待ちの間に押された Enter / s / ← → / キューのクリックは捨てる。
+  async function exclusive(fn) {
+    if (S.busy) return;
+    S.busy = true;
     try {
-      await savePose();
-    } catch (e) {
-      return msg(`姿勢の保存に失敗: ${e.message}`);
+      await fn();
+    } finally {
+      S.busy = false;
     }
-    await openFrame(ref);
-    loadQueue().catch((e) => msg(`キューの読み込みに失敗: ${e.message}`)); // flags が変わりうる
   }
 
-  async function confirm() {
-    if (S.loading) return;
+  // 前後のフレーム（dir = -1 / +1）。要確認のみの間はその一覧の中で前後に動き、
+  // 今のフレームが一覧に無いときだけ時系列の前後にする。無ければ null。
+  function neighbor(dir) {
     const f = S.frame;
+    if (S.flagOnly) {
+      const i = S.items.findIndex((q) => q.split === f.split && q.name === f.name);
+      if (i >= 0) {
+        const q = S.items[i + dir];
+        return q ? { split: q.split, name: q.name } : null;
+      }
+    }
+    return dir > 0 ? f.next : f.prev;
+  }
+
+  const noNeighbor = () => msg(S.flagOnly ? '要確認のフレームはこれ以上ありません' : 'これ以上フレームがありません');
+
+  // 確定せずに別フレームへ移る。今の姿勢は保存しておく（最初の読み込みに失敗して S.frame が無ければ保存しない）。
+  const leaveTo = (ref) => exclusive(async () => {
+    if (!ref) return noNeighbor();
+    if (S.frame) {
+      try {
+        await savePose();
+      } catch (e) {
+        return msg(`姿勢の保存に失敗: ${e.message}`);
+      }
+    }
+    await openFrame(ref);
+    await reloadQueue();
+  });
+
+  const confirm = () => exclusive(async () => {
+    const f = S.frame;
+    const flagNext = S.flagOnly ? neighbor(+1) : undefined; // 確定前の一覧で決める
     let body;
     try {
       body = await api.send('/api/confirm', { split: f.split, name: f.name, pose: S.pose, source: S.source }, 'POST');
@@ -313,23 +340,24 @@
       // 400 は棄却理由（straight が投影できない・可視行が少ない等）。姿勢を直すか s で skip。
       return msg(`確定できません: ${e.message}`);
     }
-    if (!body.next) msg('最後のフレームを確定しました');
-    else await openFrame(body.next);
-    loadQueue().catch((e) => msg(`キューの読み込みに失敗: ${e.message}`));
-  }
+    const next = flagNext === undefined ? body.next : flagNext;
+    if (next) await openFrame(next);
+    else msg(S.flagOnly ? '確定しました（要確認のフレームはこれ以上ありません）' : '最後のフレームを確定しました');
+    await reloadQueue();
+  });
 
-  async function skip() {
-    if (S.loading) return;
+  const skip = () => exclusive(async () => {
     const f = S.frame;
+    const next = neighbor(+1);
     try {
       await api.send('/api/status', { split: f.split, name: f.name, status: 'skip' }, 'POST');
     } catch (e) {
       return msg(`skip に失敗: ${e.message}`);
     }
-    if (f.next) await openFrame(f.next);
-    else msg('最後のフレームを skip しました');
-    loadQueue().catch((e) => msg(`キューの読み込みに失敗: ${e.message}`));
-  }
+    if (next) await openFrame(next);
+    else msg(S.flagOnly ? 'skip しました（要確認のフレームはこれ以上ありません）' : '最後のフレームを skip しました');
+    await reloadQueue();
+  });
 
   async function toggleFlagOnly() {
     S.flagOnly = !S.flagOnly;
@@ -354,9 +382,12 @@
     // CapsLock・Shift で大文字になっても同じキーとして扱い、倍率は ev.shiftKey で決める。
     const lower = k.length === 1 ? k.toLowerCase() : k;
     const n = ev.shiftKey ? 5 : 1;
+    // 押しっぱなしの自動リピートで、見ていないフレームを確定・skip・通過しないようにする。
+    const once = k === 'Enter' || k === 'ArrowLeft' || k === 'ArrowRight' || lower === 's' || lower === 'f';
+    if (once && ev.repeat) { ev.preventDefault(); return; }
     if (k === 'Enter') { ev.preventDefault(); return confirm(); }
-    if (k === 'ArrowLeft') { ev.preventDefault(); return leaveTo(S.frame.prev); }
-    if (k === 'ArrowRight') { ev.preventDefault(); return leaveTo(S.frame.next); }
+    if (k === 'ArrowLeft') { ev.preventDefault(); return leaveTo(neighbor(-1)); }
+    if (k === 'ArrowRight') { ev.preventDefault(); return leaveTo(neighbor(+1)); }
     if (lower === 'h') return nudge(-STEP.lateral * n, 0, 0, 0);
     if (lower === 'l') return nudge(STEP.lateral * n, 0, 0, 0);
     if (lower === 'j') return nudge(0, -STEP.longitudinal * n, 0, 0);
@@ -414,7 +445,7 @@
   async function selftest(mode) {
     const key = (type, k, shiftKey = false) => window.dispatchEvent(new KeyboardEvent(type, { key: k, shiftKey }));
     const wait = (r) => new Promise((ok) => setTimeout(ok, r));
-    const idle = async () => { while (S.pending || S.loading) await wait(50); };
+    const idle = async () => { while (S.pending || S.busy) await wait(50); };
     if (mode === 4) {
       key('keydown', '['); key('keydown', '[');
       const el = $('opacity-mask');
