@@ -19,7 +19,11 @@
     <div id="stage"><canvas id="canvas" width="640" height="384"></canvas></div>
     <aside id="side">
       <canvas id="bev" width="300" height="360"></canvas>
-      <canvas id="dial" width="120" height="120" title="ドラッグでヨー（Shift で 5 倍）／ダブルクリックで初期値"></canvas>
+      <!-- 縦に積むと右列が画面に収まらないので、ダイヤルとレーン一覧は横に並べる -->
+      <div id="dial-row">
+        <canvas id="dial" width="120" height="120" title="ドラッグでヨー（Shift で 5 倍）／ダブルクリックで初期値"></canvas>
+        <div id="lane-box"><h2>使用レーン</h2><ol id="lanes"></ol></div>
+      </div>
       <dl id="hud">
         <dt>補正</dt><dd id="hud-correction">—</dd>
         <dt>コスト</dt><dd id="hud-cost">—</dd>
@@ -37,7 +41,7 @@
   <div id="candidates"></div>
   <div id="keys">Enter 確定して次へ ｜ ← → 前/次（姿勢は保存） ｜ h l 横 ｜ j k 前後 ｜ u i ヨー ｜ , . ピッチ（Shift で 5 倍）
     ｜ Esc 初期値へ ｜ z / Shift+z 戻す/やり直す ｜ g マスク ｜ m 地図線 ｜ [ ] 投影の不透明度 ｜ o 押す間は素の画像 ｜ s skip ｜ f 要確認のみ
-    ｜ 俯瞰: ドラッグ 横/前後・ホイール ヨー ｜ ダイヤル: ドラッグでヨー（Shift で 5 倍）／ダブルクリックで初期値 ｜ 1〜4 候補を選ぶ ｜ r 広く再探索 ｜ + - 俯瞰の縮尺</div>
+    ｜ 俯瞰: ドラッグ 横/前後・ホイール ヨー ｜ ダイヤル: ドラッグでヨー（Shift で 5 倍）／ダブルクリックで初期値 ｜ t 使用レーンを巡回 ｜ 1〜4 候補を選ぶ ｜ r 広く再探索 ｜ + - 俯瞰の縮尺</div>
   <div id="msg"></div>
   <script src="/static/overlay.js"></script>
   <script src="/static/bev.js"></script>

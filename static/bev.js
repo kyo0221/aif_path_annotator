@@ -7,6 +7,7 @@
   const LINE_COLOR = '#00c8ff';
   const POINT_COLOR = '#00dc00';
   const GRID_COLOR = 'rgba(255, 255, 255, 0.08)';
+  const LANE_COLOR = 'rgba(0,200,255,0.45)'; // 候補レーンの中心線（破線）と番号
   const YAW_STEP = 0.5; // ホイール 1 刻みのヨー [deg]
 
   // handlers: {onDragStart(), onDrag(dLateral, dLongitudinal), onWheel(dYawDeg)}。どれも省略可。
@@ -53,7 +54,30 @@
       ctx.fill();
     }
 
-    // bev: {lines, paths, points}。paths を別に渡したときはそちらを描く（省略時は bev.paths）。
+    // 候補レーンの中心線を細い破線で描き、各区間のキャンバス内で最初の点の近くに #id を添える
+    // （区間の始点は車両の後ろでキャンバス外のことが多い）。
+    function lanes(items) {
+      if (!items || !items.length) return;
+      ctx.save();
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = LANE_COLOR;
+      items.forEach((lane) => polyline(lane.points));
+      ctx.setLineDash([]);
+      ctx.fillStyle = LANE_COLOR;
+      ctx.font = '10px sans-serif';
+      ctx.textBaseline = 'bottom';
+      items.forEach((lane) => {
+        const inside = (lane.points || []).map(([x, y]) => toPx(x, y))
+          .find(([px, py]) => px >= 0 && px <= w && py >= 0 && py <= h);
+        if (!inside) return;
+        const [px, py] = inside;
+        ctx.fillText(`#${lane.id}`, Math.min(px + 3, w - 30), Math.max(py - 2, 10));
+      });
+      ctx.restore();
+    }
+
+    // bev: {lines, lanes, paths, points}。paths を別に渡したときはそちらを描く（省略時は bev.paths）。
     function draw(bev, paths) {
       last = { bev, paths };
       ctx.save();
@@ -61,6 +85,7 @@
       grid();
       if (bev) {
         ctx.lineJoin = 'round';
+        lanes(bev.lanes);
         ctx.lineWidth = 2;
         ctx.strokeStyle = LINE_COLOR;
         (bev.lines || []).forEach(polyline);

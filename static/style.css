@@ -24,6 +24,7 @@ body { margin:0; display:flex; flex-direction:column; background:var(--bg); colo
 .slider input { grid-column:1; width:100%; }
 .slider output { grid-column:2; grid-row:2; text-align:right; color:var(--fg); }
 #side h2 { font-size:12px; color:var(--dim); margin:4px 0 0; }
+#lane-box h2 { margin:0; }
 #queue-list { list-style:none; margin:0; padding:0; flex:1; min-height:80px; overflow-y:auto;
               border:1px solid var(--line); }
 #queue-list li { padding:1px 6px; font-size:11px; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -32,10 +33,18 @@ body { margin:0; display:flex; flex-direction:column; background:var(--bg); colo
 #queue-list li.done { color:#5f646b; }
 #queue-list li.active.done { color:#0b0d10; }
 #queue-list .mark { color:var(--warn); margin-right:4px; }
+#lanes { list-style:none; margin:2px 0 0; padding:0; border:1px solid var(--line); }
+#lanes li { padding:0 6px; font-size:11px; line-height:15px; overflow:hidden; text-overflow:ellipsis; cursor:pointer; white-space:pre; font-variant-numeric:tabular-nums; }
+#lanes li:hover { background:#20242b; }
+#lanes li.warn { color:#ffc27a; } /* 進行方向から 60° 以上ずれたレーン（薄い橙） */
+#lanes li.active { background:var(--accent); color:#0b0d10; }
+#lanes li.active.warn { background:#ffc27a; }
 #candidates { display:flex; gap:8px; padding:0 8px; min-height:20px; color:var(--dim); }
 #bev { cursor:grab; }
 #bev:active { cursor:grabbing; }
-#dial { display:block; flex:none; width:120px; height:120px; align-self:center; cursor:grab; }
+#dial-row { display:flex; gap:8px; align-items:flex-start; flex:none; }
+#dial { display:block; flex:none; width:120px; height:120px; cursor:grab; }
+#lane-box { flex:1; min-width:0; }
 #dial:active { cursor:grabbing; }
 .cand { flex:none; width:204px; padding:1px; border:1px solid var(--line); cursor:pointer; background:var(--panel); }
 .cand:hover { border-color:var(--dim); }

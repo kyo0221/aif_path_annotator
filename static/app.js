@@ -20,6 +20,8 @@
     img: null, maskImg: null, scale: 1,
     candidates: [], // 候補の列に出している候補（frame か /api/match の応答）
     busy: false,    // 確定・skip・移動の POST からフレーム読み込みまでの間は次の移動を受け付けない（二重確定を防ぐ）
+    lanelet: null,  // 使用レーンの ID（null = 自動）。preview・/api/pose・/api/confirm に送る
+    lanes: [],      // レーン候補 [{id, distance_m, angle_deg, aligned, auto, selected}]（frame か preview の応答）
   };
 
   const api = {
@@ -268,8 +270,45 @@
     if (ol.children[S.idx]) ol.children[S.idx].scrollIntoView({ block: 'nearest' });
   }
 
+  // --- 使用レーンの一覧 ---
+  // 先頭は「自動（#id）」、以下は候補ごとに距離と進行方向からの角度。クリックでそのレーンに固定する。
+  function renderLanes() {
+    const ol = $('lanes');
+    ol.innerHTML = '';
+    const auto = S.lanes.find((l) => l.auto);
+    const row = (text, id, warn) => {
+      const li = document.createElement('li');
+      li.textContent = text;
+      li.classList.toggle('active', S.lanelet === id);
+      li.classList.toggle('warn', !!warn);
+      li.onclick = () => { if (S.frame) setLane(id); };
+      ol.appendChild(li);
+    };
+    row(auto ? `自動（#${auto.id}）` : '自動（なし）', null, false);
+    S.lanes.forEach((l) => {
+      row(`#${l.id}  ${l.distance_m.toFixed(1)} m  ${l.angle_deg.toFixed(0)}°`, l.id, l.aligned === false);
+    });
+  }
+
+  // 使用レーンを変える（null = 自動）。姿勢と同じく undo 1 つ。
+  function setLane(id) {
+    pushUndo();
+    S.lanelet = id;
+    renderLanes();
+    preview();
+  }
+
+  // t: 自動 → 候補 1 → 候補 2 → … → 自動 と巡回する。
+  function cycleLane() {
+    if (!S.lanes.length) return msg('レーン候補がありません');
+    const i = S.lanelet === null ? -1 : S.lanes.findIndex((l) => l.id === S.lanelet);
+    // 一覧から外れた ID を選んでいた場合（i = -1）も先頭へ。
+    const next = S.lanelet !== null && i === S.lanes.length - 1 ? null : S.lanes[i + 1].id;
+    setLane(next);
+  }
+
   function renderAll() {
-    draw(); drawBev(); renderTopbar(); renderHud();
+    draw(); drawBev(); renderTopbar(); renderHud(); renderLanes();
   }
 
   // --- サーバとの往復 ---
@@ -294,6 +333,8 @@
     S.frame = f;
     S.pose = f.pose;
     S.source = f.source;
+    S.lanelet = f.lanelet === undefined ? null : f.lanelet;
+    S.lanes = f.lanes || [];
     S.undo = []; S.redo = [];
     S.latest = null;
     S.view = { overlay: f.overlay, bev: f.bev, cost: f.cost, label: f.label, flags: f.flags };
@@ -322,9 +363,11 @@
         const f = S.frame;
         S.latest = null;
         try {
-          const body = await api.send('/api/preview', { split: f.split, name: f.name, pose }, 'POST');
+          // レーンは送る時点のものを使う（待つ間に変われば S.latest が立って送り直す）。
+          const body = await api.send('/api/preview', { split: f.split, name: f.name, pose, lanelet: S.lanelet }, 'POST');
           if (S.frame !== f) continue; // 応答を待つ間にフレームが変わった
           S.view = body;
+          S.lanes = body.lanes || [];
           renderAll();
         } catch (e) {
           msg(`プレビューに失敗: ${e.message}`);
@@ -335,15 +378,17 @@
   }
 
   function pushUndo() {
-    S.undo.push({ pose: S.pose, source: S.source });
+    S.undo.push({ pose: S.pose, source: S.source, lanelet: S.lanelet });
     if (S.undo.length > 200) S.undo.shift();
     S.redo = [];
   }
 
-  // undo には積まずに姿勢を変える（俯瞰のドラッグ中・undo/redo 用）。
-  function applyPose(pose, source) {
+  // undo には積まずに姿勢を変える（俯瞰のドラッグ中・undo/redo 用）。lanelet を省くと使用レーンはそのまま。
+  function applyPose(pose, source, lanelet = S.lanelet) {
     S.pose = pose;
     S.source = source;
+    S.lanelet = lanelet;
+    renderLanes();
     renderHud();
     highlightCandidate();
     preview();
@@ -360,13 +405,13 @@
 
   function history(from, to) {
     if (!from.length) return msg(from === S.undo ? 'これ以上戻せません' : 'やり直せる操作がありません');
-    to.push({ pose: S.pose, source: S.source });
+    to.push({ pose: S.pose, source: S.source, lanelet: S.lanelet });
     const h = from.pop();
-    applyPose(h.pose, h.source);
+    applyPose(h.pose, h.source, h.lanelet === undefined ? null : h.lanelet);
   }
 
   const savePose = () =>
-    api.send('/api/pose', { split: S.frame.split, name: S.frame.name, pose: S.pose, source: S.source }, 'POST');
+    api.send('/api/pose', { split: S.frame.split, name: S.frame.name, pose: S.pose, source: S.source, lanelet: S.lanelet }, 'POST');
 
   const reloadQueue = () => loadQueue().catch((e) => msg(`キューの読み込みに失敗: ${e.message}`)); // flags・状態が変わりうる
 
@@ -420,7 +465,7 @@
     const flagNext = S.flagOnly ? neighbor(+1) : undefined; // 確定前の一覧で決める
     let body;
     try {
-      body = await api.send('/api/confirm', { split: f.split, name: f.name, pose: S.pose, source: S.source }, 'POST');
+      body = await api.send('/api/confirm', { split: f.split, name: f.name, pose: S.pose, source: S.source, lanelet: S.lanelet }, 'POST');
     } catch (e) {
       // 400 は棄却理由（straight が投影できない・可視行が少ない等）。姿勢を直すか s で skip。
       return msg(`確定できません: ${e.message}`);
@@ -499,7 +544,9 @@
     // Shift+, / Shift+. は '<' / '>' として届く。
     if (k === ',' || k === '<') return nudge(0, 0, 0, -STEP.pitch * n);
     if (k === '.' || k === '>') return nudge(0, 0, 0, STEP.pitch * n);
-    if (k === 'Escape') return setPose(S.frame.init.pose, S.frame.init.source);
+    // 初期値へ戻すときは使用レーンも自動に戻す（undo 1 つ）。
+    if (k === 'Escape') { pushUndo(); return applyPose(S.frame.init.pose, S.frame.init.source, null); }
+    if (lower === 't') return cycleLane();
     if (lower === 'z') return ev.shiftKey ? history(S.redo, S.undo) : history(S.undo, S.redo);
     if (lower === 'g') { S.opts.showMask = !S.opts.showMask; return draw(); }
     if (lower === 'm') { S.opts.showLines = !S.opts.showLines; return draw(); }
@@ -551,7 +598,8 @@
   // 4: 不透明度を変えて保存（再読み込みで保たれるかの確認用）、
   // 5: 俯瞰のドラッグ・ホイール・候補 2 の選択、6: 5 に続けて r で再探索・+ で縮尺を上げる、
   // 7: ← で前のフレームへ移って候補の枚数を見る、
-  // 8: ヨー調整ダイヤルのドラッグ（時計回り 90°・±180° をまたぐ）とダブルクリック。
+  // 8: ヨー調整ダイヤルのドラッグ（時計回り 90°・±180° をまたぐ）とダブルクリック、
+  // 9: t でレーンを巡回・横切りレーンの選択（lane フラグと行数）・Esc でレーンも自動へ。
 
   async function selftest(mode) {
     const key = (type, k, shiftKey = false) => window.dispatchEvent(new KeyboardEvent(type, { key: k, shiftKey }));
@@ -578,6 +626,51 @@
     }
     const hud = () => $('hud-correction').textContent.replace('\n', ' / ');
     const out = [`start: ${hud()}`];
+    if (mode === 9) {
+      const act = () => [...$('lanes').children].findIndex((li) => li.classList.contains('active'));
+      const rows = () => $('hud-rows').textContent;
+      const st = () => `lanelet=${S.lanelet} active行=${act()} flags=[${(S.view.flags || []).join(',')}] 行数 ${rows()}`;
+      out.push(`lanes: ${S.lanes.map((l) => `#${l.id}${l.aligned ? '' : '(warn)'}${l.auto ? '(auto)' : ''}`).join(' ')}`);
+      out.push(`初期: ${st()}`);
+      if (!S.lanes.length) return msg(`SELFTEST 9\n${out.join('\n')}\nレーン候補なし`);
+      const id0 = S.lanes[0].id;
+      // (a) t 1 回で候補 1 へ
+      key('keydown', 't'); await wait(50); await idle();
+      out.push(`(a) t: ${S.lanelet === id0 ? 'OK' : 'NG'} ${st()}`);
+      // (b) 続けて押すと最後に null（自動）へ戻る
+      const seen = [S.lanelet];
+      for (let i = 0; i < 10 && S.lanelet !== null; i += 1) {
+        key('keydown', 't'); await wait(50); await idle();
+        seen.push(S.lanelet);
+      }
+      out.push(`(b) 巡回: ${seen.join(' → ')} ${S.lanelet === null ? 'OK' : 'NG'} active行=${act()}`);
+      // (c) 横切りレーン（aligned でない）を選ぶ
+      let cross = S.lanes.find((l) => l.aligned === false);
+      if (!cross) {
+        // 初期姿勢に横切りレーンが無いときは、ヨーを +70° 回して全レーンを 60° 以上ずらしてから選ぶ
+        // （行数の比較は回した後・レーンを選ぶ前とで行う）。
+        out.push('(c) 初期姿勢には aligned でないレーンがありません → ヨー +70° で代用');
+        nudge(0, 0, 70, 0); await wait(50); await idle();
+        out.push(`    ヨー +70°: ${st()}`);
+        cross = S.lanes.find((l) => l.aligned === false && !l.auto) || S.lanes.find((l) => l.aligned === false);
+      }
+      if (cross) {
+        const before = rows();
+        setLane(cross.id); await wait(50); await idle();
+        const lane = (S.view.flags || []).includes('lane');
+        out.push(`(c) #${cross.id}: lane フラグ ${lane ? 'OK' : 'NG'} 行数 ${before} → ${rows()} ${before !== rows() ? '変化' : '同じ'}；${st()}`);
+      } else {
+        out.push('(c) aligned でないレーンが見つかりません');
+      }
+      // (d) Esc で姿勢とともにレーンも自動へ
+      const undo0 = S.undo.length;
+      key('keydown', 'Escape'); await wait(50); await idle();
+      out.push(`(d) Esc: ${S.lanelet === null ? 'OK' : 'NG'} undo+${S.undo.length - undo0} ${st()}`);
+      // z で Esc を戻すとレーンも戻る（スクリーンショットは横切りレーンを選んだ状態で撮れる）
+      key('keydown', 'z'); await wait(50); await idle();
+      out.push(`z: lanelet=${S.lanelet} active行=${act()}`);
+      return msg(`SELFTEST 9\n${out.join('\n')}`);
+    }
     if (mode === 8) {
       key('keydown', 'Escape'); await idle(); // 初期値から始める
       out.push(`Esc: ${hud()}`);
