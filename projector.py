@@ -97,7 +97,11 @@ class Projector:
         cos = float(np.clip(np.dot(tangent, heading), -1.0, 1.0))
         angle = math.degrees(math.acos(cos))
         return {"id": int(lane_id), "distance_m": float(distance), "angle_deg": angle,
-                "aligned": bool(angle <= LANE_ALIGN_DEG)}
+                "aligned": bool(angle < LANE_ALIGN_DEG)}
+
+    def _check_lanelet(self, lanelet):
+        if lanelet not in self.vector_map.centerlines:
+            raise ValueError(f"lanelet {lanelet} がありません")
 
     def lane_candidates(self, pose, lanelet=None):
         """姿勢の周り（8 m 以内）のレーン候補。向きが合うものを距離順 → 残りを距離順、先頭 6 件。
@@ -106,8 +110,8 @@ class Projector:
         """
         if self._vm is None:
             return []
-        if lanelet is not None and lanelet not in self.vector_map.centerlines:
-            raise ValueError(f"lanelet {lanelet} がありません")
+        if lanelet is not None:
+            self._check_lanelet(lanelet)
         infos = [self._lane_info(lane_id, pose) for lane_id in self.vector_map.centerlines]
         near = sorted((i for i in infos if i is not None and i["distance_m"] <= LANE_SEARCH_RADIUS),
                       key=lambda i: i["distance_m"])
@@ -127,8 +131,12 @@ class Projector:
 
     def resolve_lane(self, pose, lanelet=None):
         """実際に経路の起点にするレーン {id, auto, distance_m, angle_deg}。決まらなければ id=None。"""
+        if lanelet is not None:
+            self._check_lanelet(lanelet)
         lane_id = self.auto_lanelet(pose) if lanelet is None else lanelet
         info = None if lane_id is None else self._lane_info(lane_id, pose)
+        if info is None and lanelet is not None:
+            raise ValueError(f"lanelet {lanelet} の中心線が短すぎます")
         return {"id": None if info is None else info["id"], "auto": lanelet is None,
                 "distance_m": None if info is None else info["distance_m"],
                 "angle_deg": None if info is None else info["angle_deg"]}

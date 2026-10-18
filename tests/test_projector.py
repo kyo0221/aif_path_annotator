@@ -109,6 +109,18 @@ def test_label_with_lanelet_validates(projector):
     for entry in projector.label(pose, LANE_E):  # E は横向きなので有効行 0 で [] のこともある
         validate_label([entry])
     assert projector.resolve_lane(pose, LANE_E)["angle_deg"] >= 60
+    assert projector.label(pose, LANE_E) != projector.label(pose)
+
+
+@pytest.mark.parametrize("call", ["resolve_lane", "paths", "label", "overlay"])
+def test_unknown_lanelet_raises_value_error(projector, call):
+    with pytest.raises(ValueError):
+        getattr(projector, call)(POSE, 999999)
+
+
+def test_unknown_lanelet_raises_value_error_bev(projector):
+    with pytest.raises(ValueError):
+        projector.bev(POSE, [], 999999)
 
 
 def test_bev_has_lanes(projector):
