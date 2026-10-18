@@ -61,6 +61,35 @@ def test_match_narrow_recovers_small_offset():
     assert r["pose"]["pitch"] == 1.5
 
 
+def _parallel_lines(cross=False):
+    xs = np.arange(-5, 60, 0.2)
+    lines = [np.stack([xs, np.full_like(xs, y)], 1) for y in (-1.65, 1.65)]
+    if cross:
+        ys = np.arange(-3, 3.01, 0.1)
+        lines.append(np.stack([np.full_like(ys, 15.0), ys], 1))
+    return lines
+
+
+def test_match_keeps_longitudinal_on_parallel_lines():
+    """平行線だけでは前後のコストが平らなので、既定の罰則で前後位置が初期値に留まる。"""
+    polylines = _parallel_lines()
+    field = DistanceField(polylines)
+    pose = make_pose(10.0, 0.0, 0.0)
+    points = _vehicle_points(pose, polylines)
+    r = match(field, points, pose, NARROW)
+    assert abs(r["longitudinal_m"]) <= 0.1
+
+
+def test_match_still_moves_longitudinally_with_a_cross_line():
+    """前後の手がかり（直交線）があれば、罰則があっても本当のずれは補正される。"""
+    polylines = _parallel_lines(cross=True)
+    field = DistanceField(polylines)
+    truth = make_pose(10.0, 0.0, 0.0)
+    points = _vehicle_points(truth, polylines)
+    r = match(field, points, shift_pose(truth, longitudinal=-0.4), NARROW)
+    assert abs(r["longitudinal_m"] - 0.4) <= 0.1
+
+
 def test_candidates_dedupe_and_limit():
     polylines = _polylines()
     field = DistanceField(polylines)

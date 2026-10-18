@@ -26,6 +26,10 @@ FINE_LATERAL, FINE_LATERAL_STEP = 0.08, 0.02
 FINE_LONGITUDINAL, FINE_LONGITUDINAL_STEP = 0.2, 0.1
 FINE_YAW_DEG, FINE_YAW_STEP_DEG = 0.8, 0.2
 
+# 前後方向の罰則 [コストm / m]。直線路では白線が進行方向と平行でコストが前後に平らになり、
+# ノイズで前後位置が流れるので、初期姿勢からの前後移動量に比例した罰則を仮説の選択にだけ加える。
+LONGITUDINAL_PENALTY = 0.05
+
 # 1 回に評価する点の数の上限（メモリを抑える）
 _CHUNK_POINTS = 4_000_000
 
@@ -133,8 +137,12 @@ def _axis(width, step):
     return np.arange(-width, width + step / 2, step)
 
 
-def match(field, points, pose, window):
-    """pose を初期値に、窓の範囲で格子探索 → 最良の周りを細密探索して姿勢を補正する。ピッチは変えない。"""
+def match(field, points, pose, window, longitudinal_penalty=LONGITUDINAL_PENALTY):
+    """pose を初期値に、窓の範囲で格子探索 → 最良の周りを細密探索して姿勢を補正する。ピッチは変えない。
+
+    仮説は「評価値 + longitudinal_penalty * |pose からの前後移動量|」が最小のものを選ぶ（格子・細密の両方）。
+    返す cost / cost_before は罰則を含まない評価値そのもの。
+    """
     points = np.asarray(points, float)
     before = cost(field, points, pose)
     lat = _axis(window.lateral, window.lateral_step)
@@ -143,16 +151,17 @@ def match(field, points, pose, window):
     best = (math.inf, 0.0, 0.0, 0.0)
     for dyaw in np.radians(_axis(window.yaw_deg, window.yaw_step_deg)):
         costs = _costs(field, points, pose, dl_grid, dx_grid, np.full(len(dl_grid), dyaw))
-        i = int(np.argmin(costs))
-        if costs[i] < best[0]:
-            best = (float(costs[i]), float(dl_grid[i]), float(dx_grid[i]), float(dyaw))
+        score = costs + longitudinal_penalty * np.abs(dx_grid)
+        i = int(np.argmin(score))
+        if score[i] < best[0]:
+            best = (float(score[i]), float(dl_grid[i]), float(dx_grid[i]), float(dyaw))
     _, dl, dx, dy = best
 
     fl, fx, fy = np.meshgrid(_axis(FINE_LATERAL, FINE_LATERAL_STEP), _axis(FINE_LONGITUDINAL, FINE_LONGITUDINAL_STEP),
                              np.radians(_axis(FINE_YAW_DEG, FINE_YAW_STEP_DEG)), indexing="ij")
     fl, fx, fy = dl + fl.ravel(), dx + fx.ravel(), dy + fy.ravel()
     costs = _costs(field, points, pose, fl, fx, fy)
-    i = int(np.argmin(costs))
+    i = int(np.argmin(costs + longitudinal_penalty * np.abs(fx)))
     result = shift_pose(pose, lateral=float(fl[i]), longitudinal=float(fx[i]), dyaw=float(fy[i]))
     delta = pose_delta(result, pose)
     return {"pose": result, "cost": float(costs[i]), "cost_before": before,
