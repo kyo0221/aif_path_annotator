@@ -219,7 +219,7 @@ class Annotator:
             try:
                 self.projector.resolve_lane(pose, lanelet)
             except ValueError:  # 保存済みのレーンが地図に無い: この回は自動で開く
-                lane_note = f"保存されたレーン #{lanelet} は地図に無いので自動に戻しました"
+                lane_note = f"保存されたレーン #{lanelet} は使えないので自動に戻しました"
                 lanelet = None
         return {
             "split": split, "name": name, "index": self.frames.position(split, name),

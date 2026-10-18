@@ -685,7 +685,7 @@
       const ang = (deg) => { const [x, y] = pt(deg); return Math.atan2(y - cy, x - cx); };
       const at = (type, deg, target = window, shiftKey = false) => {
         const [clientX, clientY] = pt(deg);
-        target.dispatchEvent(new MouseEvent(type, { clientX, clientY, button: 0, shiftKey, bubbles: true }));
+        target.dispatchEvent(new MouseEvent(type, { clientX, clientY, button: 0, buttons: type === 'mouseup' ? 0 : 1, shiftKey, bubbles: true }));
       };
       // 期待されるヨーの変化 [deg]（各刻みの短い弧の和 × −0.1 × 倍率）。
       const expect = (degs, gain = 1) => degs.slice(1).reduce(
@@ -726,7 +726,7 @@
       const bev = $('bev');
       const r = bev.getBoundingClientRect();
       const mouse = (type, x, y, target = window) =>
-        target.dispatchEvent(new MouseEvent(type, { clientX: r.left + x, clientY: r.top + y, button: 0, bubbles: true }));
+        target.dispatchEvent(new MouseEvent(type, { clientX: r.left + x, clientY: r.top + y, button: 0, buttons: type === 'mouseup' ? 0 : 1, bubbles: true }));
       const active = () => [...$('candidates').children].findIndex((c) => c.classList.contains('active')) + 1;
       const undo0 = S.undo.length;
       out.push(`cards=${S.candidates.length} active=${active()}`);
