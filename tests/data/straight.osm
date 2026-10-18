@@ -1,0 +1,74 @@
+<?xml version="1.0"?>
+<osm version="0.6">
+  <node id="1" visible="true" version="1" x="0" y="0" z="0.0"/>
+  <node id="2" visible="true" version="1" x="15" y="0" z="0.0"/>
+  <node id="3" visible="true" version="1" x="30" y="0" z="0.0"/>
+  <node id="4" visible="true" version="1" x="0" y="0" z="0.0"/>
+  <node id="5" visible="true" version="1" x="15" y="0" z="0.0"/>
+  <node id="6" visible="true" version="1" x="30" y="0" z="0.0"/>
+  <node id="7" visible="true" version="1" x="30" y="0" z="0.0"/>
+  <node id="8" visible="true" version="1" x="45" y="0" z="0.0"/>
+  <node id="9" visible="true" version="1" x="60" y="0" z="0.0"/>
+  <node id="10" visible="true" version="1" x="0" y="-1.65" z="0.0"/>
+  <node id="11" visible="true" version="1" x="20" y="-1.65" z="0.0"/>
+  <node id="12" visible="true" version="1" x="40" y="-1.65" z="0.0"/>
+  <node id="13" visible="true" version="1" x="60" y="-1.65" z="0.0"/>
+  <node id="14" visible="true" version="1" x="0" y="1.65" z="0.0"/>
+  <node id="15" visible="true" version="1" x="20" y="1.65" z="0.0"/>
+  <node id="16" visible="true" version="1" x="40" y="1.65" z="0.0"/>
+  <node id="17" visible="true" version="1" x="60" y="1.65" z="0.0"/>
+  <node id="18" visible="true" version="1" x="0" y="4.95" z="0.0"/>
+  <node id="19" visible="true" version="1" x="20" y="4.95" z="0.0"/>
+  <node id="20" visible="true" version="1" x="40" y="4.95" z="0.0"/>
+  <node id="21" visible="true" version="1" x="60" y="4.95" z="0.0"/>
+  <way id="1007" visible="true" version="1">
+    <nd ref="4"/>
+    <nd ref="5"/>
+    <nd ref="6"/>
+    <tag k="type" v="centerline"/>
+  </way>
+  <way id="1010" visible="true" version="1">
+    <nd ref="7"/>
+    <nd ref="8"/>
+    <nd ref="9"/>
+    <tag k="type" v="centerline"/>
+  </way>
+  <way id="1014" visible="true" version="1">
+    <nd ref="10"/>
+    <nd ref="11"/>
+    <nd ref="12"/>
+    <nd ref="13"/>
+    <tag k="type" v="line_thin"/>
+    <tag k="is_observable" v="true"/>
+  </way>
+  <way id="1018" visible="true" version="1">
+    <nd ref="14"/>
+    <nd ref="15"/>
+    <nd ref="16"/>
+    <nd ref="17"/>
+    <tag k="type" v="line_thin"/>
+    <tag k="is_observable" v="true"/>
+  </way>
+  <way id="1022" visible="true" version="1">
+    <nd ref="18"/>
+    <nd ref="19"/>
+    <nd ref="20"/>
+    <nd ref="21"/>
+    <tag k="type" v="line_thin"/>
+    <tag k="is_observable" v="true"/>
+  </way>
+  <relation id="9001" visible="true" version="1">
+    <member type="way" role="centerline" ref="1007"/>
+    <tag k="type" v="lanelet"/>
+  </relation>
+  <relation id="9002" visible="true" version="1">
+    <member type="way" role="centerline" ref="1010"/>
+    <tag k="type" v="lanelet"/>
+  </relation>
+  <relation id="9003" visible="true" version="1">
+    <member type="relation" role="from" ref="9001"/>
+    <member type="relation" role="to" ref="9002"/>
+    <tag k="type" v="lane_connection"/>
+    <tag k="turn_direction" v="straight"/>
+  </relation>
+</osm>
