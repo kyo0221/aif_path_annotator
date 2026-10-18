@@ -18,6 +18,7 @@
     source: null,   // /api/pose・/api/confirm に送る出どころ（手で動かしたら manual）
     view: null,     // 現在の姿勢に対する {overlay, bev, cost, label, flags}（frame か preview の応答）
     img: null, maskImg: null, scale: 1,
+    candidates: [], // 候補の列に出している候補（frame か /api/match の応答）
     busy: false,    // 確定・skip・移動の POST からフレーム読み込みまでの間は次の移動を受け付けない（二重確定を防ぐ）
   };
 
@@ -130,21 +131,79 @@
     });
   }
 
-  // 俯瞰パネルは Task 11 の bev.js（window.Bev）が描く。無ければ何もしない。
+  // 俯瞰パネル（bev.js）。ドラッグは 1 回で undo 1 つ（押した時点で積み、動かす間は積まない）。
   let bevPanel = null;
   function drawBev() {
-    if (!window.Bev || !S.view) return;
-    if (!bevPanel) bevPanel = window.Bev.create($('bev'), {});
+    if (!S.view) return;
+    if (!bevPanel) {
+      bevPanel = window.Bev.create($('bev'), {
+        onDragStart: () => { if (S.frame) pushUndo(); },
+        onDrag: (dLateral, dLongitudinal) => {
+          if (S.frame) applyPose(shiftPose(S.pose, dLateral, dLongitudinal, 0, 0), 'manual');
+        },
+        onWheel: (dYawDeg) => { if (S.frame) nudge(0, 0, dYawDeg, 0); },
+      });
+    }
     bevPanel.draw(S.view.bev);
   }
 
-  // 候補の列は Task 11 で描く。データが無ければ何もしない。
-  function renderCandidates(candidates) {
-    if (!candidates || !candidates.length) return;
+  function setPpm(dir) {
+    bevPanel.setPpm(bevPanel.ppm + dir * 2);
   }
 
   const fmt = (v, d) => `${v >= 0 ? '+' : ''}${v.toFixed(d)}`;
   const fmtCost = (c) => (c === null || c === undefined ? '—' : `${c.toFixed(2)} m`);
+
+  // --- 候補の列 ---
+  // 縮小した画像に候補の地図線・経路を重ね、角にコストと補正量を出す。クリック / 1〜4 で選ぶ。
+
+  const THUMB_SCALE = 200 / IMG_W;
+  const THUMB_OPTS = { showMask: false, showLines: true, mapAlpha: 1, maskAlpha: 0, hideAll: false };
+  const samePose = (a, b) => !!a && !!b && ['x', 'y', 'yaw', 'pitch'].every((k) => Math.abs(a[k] - b[k]) < 1e-9);
+
+  function renderCandidates(candidates) {
+    S.candidates = (candidates || []).slice(0, 4);
+    const box = $('candidates');
+    box.innerHTML = '';
+    S.candidates.forEach((c, i) => {
+      const card = document.createElement('div');
+      card.className = 'cand';
+      const cv = document.createElement('canvas');
+      cv.width = 200;
+      cv.height = Math.round(IMG_H * THUMB_SCALE);
+      const cap = document.createElement('div');
+      cap.className = 'cap';
+      const cost = c.cost === null || c.cost === undefined ? '—' : c.cost.toFixed(2);
+      cap.textContent = `${i + 1}: ${cost} m  横${fmt(c.lateral_m, 2)} ヨー${fmt(c.yaw_deg, 1)}°`;
+      card.title = c.init;
+      card.append(cv, cap);
+      card.onclick = () => chooseCandidate(i);
+      box.appendChild(card);
+    });
+    drawThumbs();
+    highlightCandidate();
+  }
+
+  // 画像の読み込みが後から終わったときにも呼ぶ。
+  function drawThumbs() {
+    [...$('candidates').querySelectorAll('canvas')].forEach((cv, i) => {
+      window.Overlay.draw(cv.getContext('2d'), {
+        img: S.img, maskImg: null, overlay: S.candidates[i].overlay, scale: THUMB_SCALE, opts: THUMB_OPTS,
+      });
+    });
+  }
+
+  function highlightCandidate() {
+    [...$('candidates').children].forEach((card, i) => {
+      card.classList.toggle('active', samePose(S.candidates[i].pose, S.pose));
+    });
+  }
+
+  function chooseCandidate(i) {
+    const c = S.candidates[i];
+    if (!S.frame || !c) return;
+    setPose(c.pose, 'candidate');
+  }
 
   function renderTopbar() {
     const f = S.frame;
@@ -225,7 +284,7 @@
     const img = new Image();
     const maskImg = new Image();
     // 応答が前後しても、今のフレームの画像だけを描く。
-    img.onload = () => { if (S.img === img) draw(); };
+    img.onload = () => { if (S.img === img) { draw(); drawThumbs(); } };
     maskImg.onload = () => { if (S.maskImg === maskImg) draw(); };
     S.img = img; S.maskImg = maskImg;
     img.src = `/api/image/${f.split}/${f.name}`;
@@ -259,14 +318,24 @@
     })();
   }
 
-  function setPose(pose, source) {
+  function pushUndo() {
     S.undo.push({ pose: S.pose, source: S.source });
     if (S.undo.length > 200) S.undo.shift();
     S.redo = [];
+  }
+
+  // undo には積まずに姿勢を変える（俯瞰のドラッグ中・undo/redo 用）。
+  function applyPose(pose, source) {
     S.pose = pose;
     S.source = source;
     renderHud();
+    highlightCandidate();
     preview();
+  }
+
+  function setPose(pose, source) {
+    pushUndo();
+    applyPose(pose, source);
   }
 
   function nudge(lateral, longitudinal, dyawDeg, dpitch) {
@@ -277,10 +346,7 @@
     if (!from.length) return msg(from === S.undo ? 'これ以上戻せません' : 'やり直せる操作がありません');
     to.push({ pose: S.pose, source: S.source });
     const h = from.pop();
-    S.pose = h.pose;
-    S.source = h.source;
-    renderHud();
-    preview();
+    applyPose(h.pose, h.source);
   }
 
   const savePose = () =>
@@ -359,6 +425,23 @@
     await reloadQueue();
   });
 
+  // 今の姿勢から広い窓で照合し直し、最良の候補へ移して候補の列を作り直す。
+  const rematch = () => exclusive(async () => {
+    const f = S.frame;
+    msg('再探索中…');
+    let body;
+    try {
+      body = await api.send('/api/match', { split: f.split, name: f.name, pose: S.pose, window: 'wide' }, 'POST');
+    } catch (e) {
+      return msg(`再探索に失敗: ${e.message}`);
+    }
+    if (S.frame !== f) return;
+    if (!body.candidates.length) return msg('白線点が少なく再探索できません');
+    setPose(body.pose, 'candidate');
+    renderCandidates(body.candidates);
+    msg(`再探索: コスト ${fmtCost(body.cost)}`);
+  });
+
   async function toggleFlagOnly() {
     S.flagOnly = !S.flagOnly;
     try {
@@ -383,7 +466,7 @@
     const lower = k.length === 1 ? k.toLowerCase() : k;
     const n = ev.shiftKey ? 5 : 1;
     // 押しっぱなしの自動リピートで、見ていないフレームを確定・skip・通過しないようにする。
-    const once = k === 'Enter' || k === 'ArrowLeft' || k === 'ArrowRight' || lower === 's' || lower === 'f';
+    const once = k === 'Enter' || k === 'ArrowLeft' || k === 'ArrowRight' || lower === 's' || lower === 'f' || lower === 'r';
     if (once && ev.repeat) { ev.preventDefault(); return; }
     if (k === 'Enter') { ev.preventDefault(); return confirm(); }
     if (k === 'ArrowLeft') { ev.preventDefault(); return leaveTo(neighbor(-1)); }
@@ -409,6 +492,11 @@
     }
     if (lower === 's') return skip();
     if (lower === 'f') return toggleFlagOnly();
+    if (lower === 'r') return rematch();
+    if (k >= '1' && k <= '4' && k.length === 1) return chooseCandidate(Number(k) - 1);
+    // '=' は Shift 無しの '+'（US 配列）。
+    if (k === '+' || k === '=') return setPpm(+1);
+    if (k === '-') return setPpm(-1);
   });
 
   // o は押している間だけ。離したとき（またはウィンドウを離れたとき）に戻す。
@@ -440,7 +528,9 @@
   // --- 自己テスト（?selftest=N のときだけ。ヘッドレスのスクリーンショット確認用） ---
   // 実際の keydown/keyup を window に投げ、結果を #msg に書き出す。
   // 1: 姿勢キー・undo/redo・表示切替、2: Enter で確定して次へ、3: 確定できない姿勢で Enter（400）、
-  // 4: 不透明度を変えて保存（再読み込みで保たれるかの確認用）。
+  // 4: 不透明度を変えて保存（再読み込みで保たれるかの確認用）、
+  // 5: 俯瞰のドラッグ・ホイール・候補 2 の選択、6: 5 に続けて r で再探索・+ で縮尺を上げる、
+  // 7: ← で前のフレームへ移って候補の枚数を見る。
 
   async function selftest(mode) {
     const key = (type, k, shiftKey = false) => window.dispatchEvent(new KeyboardEvent(type, { key: k, shiftKey }));
@@ -453,6 +543,10 @@
       el.dispatchEvent(new Event('input'));
       return msg(`SELFTEST 4: map=${$('opacity-map').value} mask=${el.value}`);
     }
+    if (mode === 7) {
+      key('keydown', 'ArrowLeft'); await wait(300); await idle();
+      return msg(`SELFTEST 7: ${S.frame.name} 候補 ${S.candidates.length} 枚 (${S.candidates.map((c) => c.init).join(', ')})`);
+    }
     if (mode === 2 || mode === 3) {
       const before = S.frame.name;
       if (mode === 3) setPose({ x: 0, y: 0, yaw: 0, pitch: 0 }, 'manual');
@@ -463,6 +557,32 @@
     }
     const hud = () => $('hud-correction').textContent.replace('\n', ' / ');
     const out = [`start: ${hud()}`];
+    if (mode === 5 || mode === 6) {
+      const bev = $('bev');
+      const r = bev.getBoundingClientRect();
+      const mouse = (type, x, y, target = window) =>
+        target.dispatchEvent(new MouseEvent(type, { clientX: r.left + x, clientY: r.top + y, button: 0, bubbles: true }));
+      const active = () => [...$('candidates').children].findIndex((c) => c.classList.contains('active')) + 1;
+      const undo0 = S.undo.length;
+      out.push(`cards=${S.candidates.length} active=${active()}`);
+      mouse('mousedown', 150, 200, bev);
+      mouse('mousemove', 162, 194); mouse('mousemove', 174, 188);
+      mouse('mouseup', 174, 188);
+      await wait(100); await idle();
+      out.push(`drag 右24 上12 (ppm ${bevPanel.ppm}): ${hud()} src=${S.source} undo+${S.undo.length - undo0}`);
+      bev.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, bubbles: true, cancelable: true }));
+      await idle(); out.push(`wheel 上: ${hud()}`);
+      key('keydown', '2'); await idle();
+      out.push(`2: ${hud()} src=${S.source} active=${active()}`);
+      if (mode === 6) {
+        const before = S.candidates.map((c) => c.cost.toFixed(2)).join(',');
+        key('keydown', 'r'); await wait(100); await idle();
+        out.push(`r: ${$('msg').textContent} 候補 ${before} → ${S.candidates.map((c) => c.cost.toFixed(2)).join(',')} active=${active()} src=${S.source}`);
+        key('keydown', '+'); key('keydown', '='); key('keydown', '+'); out.push(`+ = +: ppm=${bevPanel.ppm}`);
+        key('keydown', '-'); out.push(`-: ppm=${bevPanel.ppm}`);
+      }
+      return msg(`SELFTEST ${mode}\n${out.join('\n')}`);
+    }
     key('keydown', 'h'); await idle(); out.push(`h: ${hud()} src=${S.source}`);
     key('keydown', 'H', true); await idle(); out.push(`H: ${hud()}`);
     key('keydown', 'i'); key('keydown', '.'); await idle(); out.push(`i .: ${hud()}`);
