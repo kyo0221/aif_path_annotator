@@ -8,17 +8,26 @@ excluded/<split>/ へ移す（元に戻すには同名ファイルを images/・
 import argparse
 import json
 import os
+import re
 from pathlib import Path
+
+
+_SAFE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _safe_part(part: str) -> bool:
+    """パス成分として安全か（store._check_name と同じ規則）。"""
+    return bool(_SAFE.match(part)) and set(part) != {"."}
 
 
 def _skipped_keys(root: Path) -> list[str] | None:
     """state から skip のキー（"<split>/<name>"）を返す。読めなければ None。"""
     try:
-        state = json.loads((root / "annotation_state.json").read_text())
+        state = json.loads((root / "annotation_state.json").read_text(encoding="utf-8"))
         frames = state["frames"]
         return sorted(k for k, v in frames.items()
                       if isinstance(v, dict) and v.get("status") == "skip")
-    except (OSError, ValueError, KeyError, AttributeError):
+    except (OSError, ValueError, KeyError, AttributeError, TypeError):
         return None
 
 
@@ -37,6 +46,9 @@ def main(argv=None) -> int:
     count = 0
     for key in keys:
         split, _, name = key.partition("/")
+        if not (_safe_part(split) and _safe_part(name)):
+            print(f"warning: 不正なキーを無視します: {key}")
+            continue
         pairs = [(root / "images" / split / f"{name}.png",
                   root / "excluded" / split / f"{name}.png"),
                  (root / "labels" / split / f"{name}.txt",

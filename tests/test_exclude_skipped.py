@@ -39,3 +39,15 @@ def test_dry_run_moves_nothing(tmp_path, capsys):
 def test_missing_state_is_noop(tmp_path):
     assert exclude_skipped.main(["--root", str(tmp_path)]) == 0
     assert not (tmp_path / "excluded").exists()
+
+
+def test_rejects_traversal_keys(tmp_path, capsys):
+    (tmp_path / "x.png").write_bytes(b"x")
+    state = {"frames": {"train/../../x": {"status": "skip"},
+                        "../y": {"status": "skip"}}}
+    (tmp_path / "annotation_state.json").write_text(json.dumps(state))
+    assert exclude_skipped.main(["--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "train/../../x" in out and "../y" in out
+    assert (tmp_path / "x.png").read_bytes() == b"x"
+    assert not (tmp_path / "excluded").exists()
