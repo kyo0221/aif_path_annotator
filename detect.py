@@ -126,6 +126,37 @@ def score_frames(records, weights=None):
     return out
 
 
+MAX_DIVERGENCE_PX = 639.0  # IMG_W - 1（geom.js の xpToX と同じ規約）。比較不能なフレームに返す最大値。
+
+
+def _entry_by_class(label, cls):
+    return next((e for e in label if e.get("class") == cls), None)
+
+
+def label_divergence(existing, predicted):
+    """既存ラベルと推論ラベルの乖離量（px, 0〜639）。
+
+    straight 同士を、既存ラベルで有効な行について比較する。
+    比較できる行が無い場合は最大値を返す（人が見るべきフレームなので上位に出す）。
+
+    注意: 「既存で有効」なだけでは足りない。予測側がその行を無効と判定しているなら
+    予測の xp はプレースホルダの 0.0 でしかなく比較材料にならないので、
+    既存・予測の両方で有効な行だけを比較対象にする。
+    """
+    e = _entry_by_class(existing, "straight")
+    p = _entry_by_class(predicted, "straight")
+    if e is None or p is None:
+        return MAX_DIVERGENCE_PX
+    eh = np.asarray(e["h_vector"], dtype=bool)
+    ph = np.asarray(p["h_vector"], dtype=bool)
+    both = eh & ph
+    if not both.any():
+        return MAX_DIVERGENCE_PX
+    exp = np.asarray(e["xp"], dtype=float)
+    pxp = np.asarray(p["xp"], dtype=float)
+    return float(np.mean(np.abs(exp[both] - pxp[both])) * MAX_DIVERGENCE_PX)
+
+
 def group_by_bag(names):
     """フレーム名を bag ごとにまとめ、連番順に並べて返す。"""
     parsed = {}

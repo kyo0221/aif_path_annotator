@@ -1,4 +1,9 @@
-"""アノテーションツールの HTTP API。標準ライブラリのみで動く。"""
+"""アノテーションツールの HTTP API。標準ライブラリのみで動く。
+
+推論（tools.path_annotator.infer）は torch と別リポジトリの学習コードに依存するため、
+ここでは無条件 import しない。inferencer を使う経路（キューの乖離順並べ替え・
+/api/autolabel）でだけ、呼び出し側から渡された Inferencer インスタンスを使う。
+"""
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -19,16 +24,67 @@ ROW_START = curve.ROW_START
 class Annotator:
     """ストアとキュー（スコア順フレーム一覧）を束ねる。"""
 
-    def __init__(self, root):
+    def __init__(self, root, inferencer=None):
         self.store = LabelStore(root)
         self.store.ensure_backup()
+        self.inferencer = inferencer
         self._queue = None
         self._bags = {}  # split -> (bag名 -> 連番順のフレーム名リスト)
 
     def queue(self, refresh=False):
+        """フレームの一覧をキュー順（悪い順）で返す。
+
+        inferencer が無ければ従来どおり detect.score_dataset（異常スコア）。
+        inferencer があれば全フレームを推論し、既存ラベルとの乖離（px）降順で
+        並べる。異常スコアは自己位置推定が正しい前提の指標で、ドリフト箇所では
+        「滑らかで自信を持って間違っているラベル」を見逃すため、重みがある場合は
+        使わない。
+        """
         if self._queue is None or refresh:
-            self._queue = detect.score_dataset(self.store)
+            if self.inferencer is not None:
+                self._queue = self._queue_by_divergence()
+            else:
+                self._queue = detect.score_dataset(self.store)
         return self._queue
+
+    def _queue_by_divergence(self):
+        """全フレームを推論し、既存ラベルとの乖離（px）降順で返す。"""
+        items = []  # (split, name)
+        for split in self.store.splits():
+            for name in self.store.frames(split):
+                items.append((split, name))
+        if not items:
+            return []
+        image_paths = [self.store.image_path(split, name) for split, name in items]
+        predictions = self.inferencer.predict_batch(image_paths)
+        out = []
+        for (split, name), predicted in zip(items, predictions):
+            try:
+                existing = self.store.load(split, name)
+                score = detect.label_divergence(existing, predicted)
+                reasons = ["divergence"]
+            except Exception:  # noqa: BLE001
+                # 読めないラベルは乖離を計算できないが、queue の目的は壊れた
+                # ラベルを人に見せることなので、キュー全体を落とさず最上位に出す。
+                score = detect.MAX_DIVERGENCE_PX
+                reasons = [detect.UNREADABLE_REASON, "divergence"]
+            out.append(
+                {
+                    "split": split,
+                    "name": name,
+                    "score": score,
+                    "reasons": reasons,
+                    "metrics": {"divergence": score},
+                }
+            )
+        out.sort(key=lambda r: r["score"], reverse=True)
+        return out
+
+    def autolabel(self, split, name):
+        """このフレームを推論し、保存はせず推論ラベルを返す。"""
+        if self.inferencer is None:
+            raise ValueError("重みファイルが指定されていません")
+        return self.inferencer.predict(self.store.image_path(split, name))
 
     def bags(self, split):
         """split の bag グルーピング。フレーム表示のたび 2 万件を走査しないようキャッシュする。"""
@@ -292,6 +348,9 @@ def make_handler(app):
                 if path == "/api/status":
                     app.store.set_status(payload["split"], payload["name"], payload["status"])
                     return self._json({"ok": True})
+                if path == "/api/autolabel":
+                    label = app.autolabel(payload["split"], payload["name"])
+                    return self._json({"label": label})
             except ValueError as e:
                 return self._error(400, str(e))
             except (KeyError, TypeError, FileNotFoundError) as e:
@@ -352,7 +411,7 @@ def make_handler(app):
     return Handler
 
 
-def make_server(root, port=8765):
+def make_server(root, port=8765, inferencer=None):
     """127.0.0.1 にだけバインドしたサーバを返す（serve_forever は呼び出し側で）。"""
-    app = Annotator(root)
+    app = Annotator(root, inferencer=inferencer)
     return ThreadingHTTPServer(("127.0.0.1", port), make_handler(app))

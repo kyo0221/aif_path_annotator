@@ -5,6 +5,7 @@
   const G = window.Geom;
   const canvas = document.getElementById('canvas');
   const ctx = canvas.getContext('2d');
+  const autolabelBtn = document.getElementById('autolabel-btn');
   const COLORS = { straight: '#ff4d4d', left: '#4dff88', right: '#4da3ff' };
   // style.css の #mode-badge（ADD）/ #mode-badge.delete（DELETE）と同じ値。
   // バッジと始点マーカーの色をここ一箇所にまとめる（CSS とは値を手で合わせるだけで、
@@ -240,6 +241,42 @@
     } catch (e) { msg(`保存失敗: ${e.message}`); }
   }
 
+  // --- 自動アノテーション（推論結果でこのフレームを丸ごと置き換える） ---
+
+  // ボタンクリックと 'a' キーの両方から呼ぶ共通処理。enqueue に載せ、
+  // 既存の直列化チェーン（preview/save など）と衝突しないようにする。
+  function autolabel() {
+    return enqueue(async () => {
+      if (!S.label) return;
+      const epoch = S.epoch;
+      let body;
+      try {
+        body = await api.send('/api/autolabel', { split: S.split, name: S.name }, 'POST');
+      } catch (e) {
+        // 重みファイルが無いとき（400）もここに来る。サーバのエラー文言をそのまま出す。
+        return msg(`自動アノテーションに失敗: ${e.message}`);
+      }
+      if (S.epoch !== epoch) return; // 応答を待つ間にフレーム／エントリ構成が変わった
+      snapshot(); // u で戻せるよう、置き換える前に現在の状態を積む
+      S.label = body.label;
+      // 推論結果で丸ごと差し替えたので、伝播の基準（S.baseXp/S.baseH）もここを
+      // 新しい起点として取り直す（loadIndex と同じ扱い）。
+      S.baseXp = body.label.map((e) => e.xp.slice());
+      S.baseH = body.label.map((e) => e.h_vector.slice());
+      S.entry = 0;
+      S.epoch += 1; // ラベル構造が入れ替わった
+      // すでに enqueue 済みの関数の内側なので、ここは syncControlRows() ではなく
+      // fetchControlRows() を直接 await する（syncControlRows() は自身も enqueue
+      // するため、実行中の自分自身を待つ形になりデッドロックする。上の
+      // fetchControlRows/syncControlRows のコメント参照）。
+      await fetchControlRows(); // S.label が丸ごと入れ替わる
+      refreshHud(); draw();
+      return save();
+    });
+  }
+
+  autolabelBtn.addEventListener('click', () => autolabel());
+
   // --- マウス操作 ---
 
   function canvasPos(ev) {
@@ -413,6 +450,7 @@
       refreshHud();
       return;
     }
+    if (lower === 'a') return autolabel();
     if (k === '1' || k === '2' || k === '3') {
       const next = { 1: 'straight', 2: 'left', 3: 'right' }[k];
       if (cur().class === next) return;
