@@ -21,11 +21,13 @@ def _vehicle_points(pose, polylines):
 
 
 def test_distance_matches_kdtree_within_3cm():
-    polylines = _polylines()
+    # 軸に平行な線に加え、斜めの線と、格子点からセルの端数だけずれた線も入れる
+    t = np.linspace(0, 30, 300)
+    polylines = _polylines() + [np.stack([t, 0.4 * t - 3.0], 1), np.stack([t, np.full_like(t, 3.2 + 0.0173)], 1)]
     field = DistanceField(polylines)
-    tree = cKDTree(np.concatenate([densify(p, 0.01) for p in polylines]))
+    tree = cKDTree(np.concatenate([densify(p, 0.002) for p in polylines]))
     rng = np.random.default_rng(0)
-    xy = np.stack([rng.uniform(0, 30, 500), rng.uniform(-3, 7, 500)], 1)
+    xy = np.stack([rng.uniform(0, 30, 3000), rng.uniform(-3, 9, 3000)], 1)
     expected = np.minimum(tree.query(xy)[0], 0.5)
     assert np.max(np.abs(field.distance(xy) - expected)) <= 0.03
 
@@ -76,3 +78,12 @@ def test_candidates_dedupe_and_limit():
     for c in out:
         assert {"pose", "cost", "lateral_m", "longitudinal_m", "yaw_deg", "init"} <= set(c)
         assert "overlay" not in c
+
+
+def test_empty_inputs():
+    import pytest
+
+    with pytest.raises(ValueError):
+        DistanceField([])
+    field = DistanceField(_polylines())
+    assert match(field, np.empty((0, 2)), make_pose(10.0, 0.0, 0.0), NARROW)["cost"] == 0.5

@@ -8,7 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import numpy as np  # noqa: E402
 
-from tools.path_annotator.matching import NARROW, WIDE, DistanceField, candidates, match, observable_polylines  # noqa: E402
+from scipy.spatial import cKDTree  # noqa: E402
+
+from tools.path_annotator.matching import (NARROW, WIDE, DistanceField, candidates, densify, match,  # noqa: E402
+                                           observable_polylines)
 from tools.path_annotator.pose import make_pose, shift_pose  # noqa: E402
 
 
@@ -40,7 +43,13 @@ def main():
     inits = [(init, "gnss"), (shift_pose(init, lateral=3.3), "lane_left"),
              (shift_pose(init, lateral=-3.3), "lane_right"), (shift_pose(init, longitudinal=5.0), "ahead")]
     out, t_cand = timed(lambda: candidates(field, points, inits, WIDE))
+    # 距離場の誤差: 地図の範囲内の乱数点で、2 mm に densify した線の cKDTree 距離（0.5 で打ち切り）と比べる
+    tree = cKDTree(np.concatenate([densify(p, 0.002) for p in polylines]))
+    lo, hi = np.concatenate(polylines).min(axis=0), np.concatenate(polylines).max(axis=0)
+    xy = rng.uniform(lo, hi, (200_000, 2))
+    err = np.abs(field.distance(xy) - np.minimum(tree.query(xy)[0], 0.5))
     print(f"polylines={len(polylines)} grid={field.grid.shape} points={args.points}")
+    print(f"distance error max {err.max():.4f} m (200k random points, target <= 0.03)")
     print(f"parse        {t_parse:.3f} s")
     print(f"DistanceField {t_field:.3f} s")
     print(f"WIDE match   {t_wide:.3f} s  (target < 0.3)")

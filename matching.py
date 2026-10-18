@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from scipy.ndimage import distance_transform_edt, map_coordinates
+from scipy.spatial import cKDTree
 
 from tools.path_annotator.pose import pose_delta, shift_pose
 
@@ -72,6 +73,8 @@ class DistanceField:
 
     def __init__(self, polylines, cell=CELL, trunc=TRUNC, margin=5.0):
         self.cell, self.trunc = cell, trunc
+        if len(polylines) == 0:
+            raise ValueError("polylines が空です")
         dense = np.concatenate([densify(p, cell / 2) for p in polylines])
         lo, hi = dense.min(axis=0) - margin, dense.max(axis=0) + margin
         self.origin = (float(lo[0]), float(lo[1]))
@@ -79,8 +82,13 @@ class DistanceField:
         index = np.rint((dense - lo) / cell).astype(int)
         mask = np.ones(shape, bool)
         mask[index[:, 1], index[:, 0]] = False  # 線のある格子点だけ 0（距離 0 の元）
-        distance = distance_transform_edt(mask) * cell
-        self.grid = np.minimum(distance, trunc).astype(np.float32)
+        # 線を格子点へ丸めた距離は最大 cell*0.71 ずれるので、近傍の格子点だけ厳密な距離で上書きする
+        rough = distance_transform_edt(mask) * cell
+        self.grid = np.full(shape, trunc, np.float32)
+        rows, cols = np.nonzero(rough < trunc + 2 * cell)
+        nodes = np.stack([lo[0] + cols * cell, lo[1] + rows * cell], 1)
+        exact, _ = cKDTree(np.concatenate([densify(p, cell / 4) for p in polylines])).query(nodes)
+        self.grid[rows, cols] = np.minimum(exact, trunc)
 
     def distance(self, xy):
         """地図座標 xy[..., 2] の最寄り線までの距離を双一次補間で返す。格子外は trunc。"""
@@ -100,6 +108,8 @@ def _costs(field, points, pose, lateral, longitudinal, dyaw):
     left = np.array([-math.sin(yaw), math.cos(yaw)])
     base = np.array([pose["x"], pose["y"]])
     points = np.asarray(points, float)
+    if len(points) == 0:
+        return np.full(len(lateral), field.trunc)
     out = np.empty(len(lateral))
     chunk = max(1, _CHUNK_POINTS // max(1, len(points)))
     for start in range(0, len(lateral), chunk):
