@@ -165,8 +165,9 @@ YOLOP 点の俯瞰変換に使う行→距離の表（現行は起動時に 1 �
 | POST | `/api/confirm` `{split, name, pose}` | 姿勢からラベルを生成・検証して保存し、poses.json と status=done を更新する。straight が無い、または下記の棄却基準に当たれば 400 で理由を返す |
 
 確定時の棄却基準は学習側 `Models/data_parsing/rosbag/converter.py` の `rejection_reasons` と同じにする:
-最大の可視行数が 10 行未満、または straight の可視行の 50% 以上が画像端（`xp` < 0.02 または > 0.98）。
-しきい値は converter から import できればそれを使い、できなければ同じ値をコピーして出典をコメントに書く。
+最大の可視行数が 10 行未満（`MIN_VISIBLE_ROWS = 10`）、または straight の可視行の 50% 以上（`EDGE_RATIO = 0.5`）が
+画像端（`xp` <= 0.01 または >= 0.99、`EDGE_MARGIN = 0.01`）。
+converter.py は冒頭で ROS の `ament_index_python` を import するため本ツールからは import できない。同じ値をコピーし、出典をコメントに書く。
 棄却されたフレームは画面に理由を出し、姿勢を直すか `s` で skip にする。
 | POST | `/api/status` `{split, name, status}` | `skip` / `unseen` の設定（現行） |
 | GET | `/api/image/<split>/<name>` | 画像 PNG（現行） |
