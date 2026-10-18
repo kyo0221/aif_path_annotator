@@ -9,6 +9,7 @@ import sys
 import numpy as np
 
 from tools.path_annotator.matching import densify, observable_polylines
+from tools.path_annotator.store import ROW_START
 
 H, W = 384, 640
 NUM_ROWS = 48
@@ -97,9 +98,13 @@ class Projector:
         local = to_vehicle(_resample(path), pose)
         pixels, visible = self.camera_for(pose["pitch"]).project(np.c_[local, np.zeros(len(local))])
         columns, valid = self._row_anchor_columns(pixels, visible, NUM_ROWS, H, W)
-        if not valid.any():
+        # ROW_START より上の行は学習に使わない（store.validate_label が弾く）。ピッチが + だと
+        # 20 m 先がここまで上がるので 0 にしておく。ピッチ 0 では元々 0 なので converter.py と一致する。
+        xp = [0.0 if row < ROW_START else float(v) for row, v in enumerate(columns)]
+        h = [0 if row < ROW_START else int(v) for row, v in enumerate(valid)]
+        if not any(h):
             return None
-        return {"xp": [float(v) for v in columns], "h_vector": [int(v) for v in valid]}
+        return {"xp": xp, "h_vector": h}
 
     def _label_rows(self, paths, pose):
         rows = {}

@@ -81,7 +81,7 @@ def main(argv=None):
     ap.add_argument("--learning-repo", help="学習リポジトリ（投影コードの取得元）")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true", help="ブラウザを自動で開かない")
-    ap.add_argument("--cost-threshold", type=float, default=0.25, help="候補を採用するマッチングコストの上限")
+    ap.add_argument("--cost-threshold", type=float, default=0.25, help="要確認フラグ cost を立てる照合コストのしきい値 [m]（候補の採否には使わない）")
     args = ap.parse_args(argv)
 
     if not (args.vectormap and args.yolop and args.params and args.learning_repo):

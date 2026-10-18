@@ -150,6 +150,9 @@ class LabelStore:
 
     def save(self, split, name, label):
         validate_label(label)
+        # ファイルシステムに触る前に名前を検査する。
+        _check_name(split)
+        _check_name(name)
         # labels/<split>/ はツールが生成するので、無ければここで作る。
         (self.root / "labels" / split).mkdir(parents=True, exist_ok=True)
         _atomic_write_json(self.label_path(split, name), label)

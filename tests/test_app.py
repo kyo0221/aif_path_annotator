@@ -76,3 +76,43 @@ def test_few_points_skips_matching(annotator_no_points):
     assert r["source"] == "gnss"
     assert "few_points" in r["flags"]
     assert r["candidates"] == []
+
+
+def test_set_pose_on_done_frame_resets_status(annotator):
+    r = annotator.open_frame("train", "f000000")
+    annotator.confirm("train", "f000000", r["pose"], "auto")
+    annotator.set_pose("train", "f000000", r["pose"], "manual")
+    assert annotator.store.get_status("train", "f000000") == "done"
+    annotator.set_pose("train", "f000000", shift_pose(r["pose"], lateral=0.2), "manual")
+    assert annotator.store.get_status("train", "f000000") == "unseen"
+
+
+def test_candidate_cache_is_bounded(annotator):
+    from tools.path_annotator.app import CANDIDATE_CACHE_SIZE
+
+    assert CANDIDATE_CACHE_SIZE == 32
+    for i in range(40):
+        annotator._remember_candidates(f"train/f{i:06d}", [{"i": i}])
+    assert len(annotator._candidates) == 32
+    assert annotator._cached_candidates("train/f000000") is None
+    assert annotator._cached_candidates("train/f000007") is None
+    assert annotator._cached_candidates("train/f000008") == [{"i": 8}]
+    # 参照したキーは新しい扱いになり、次の追加で追い出されない
+    annotator._remember_candidates("train/f000040", [])
+    assert annotator._cached_candidates("train/f000008") == [{"i": 8}]
+    assert annotator._cached_candidates("train/f000009") is None
+
+
+def test_default_prefers_propagated_within_margin():
+    from tools.path_annotator.app import select_default
+
+    found = [{"init": "gnss", "cost": 0.19}, {"init": "propagated", "cost": 0.21}]
+    assert select_default(found, "propagated")["init"] == "propagated"
+    assert select_default(found, "gnss")["init"] == "gnss"
+
+
+def test_default_takes_best_beyond_margin():
+    from tools.path_annotator.app import select_default
+
+    found = [{"init": "gnss", "cost": 0.19}, {"init": "propagated", "cost": 0.24}]
+    assert select_default(found, "propagated")["init"] == "gnss"

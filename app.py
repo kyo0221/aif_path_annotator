@@ -1,5 +1,6 @@
 """姿勢の初期化・照合・候補・確定をまとめる Annotator。HTTP 層はここへ転送するだけ。"""
 import threading
+from collections import OrderedDict
 
 from tools.path_annotator import matching
 from tools.path_annotator.pose import pose_delta, shift_pose
@@ -10,10 +11,21 @@ JUMP_LATERAL = 0.3
 JUMP_YAW_DEG = 2.0
 PREFER_PROPAGATED_MARGIN = 0.03
 MIN_POINTS = 30
+CANDIDATE_CACHE_SIZE = 32  # 候補のオーバーレイは 1 フレーム数百 KB になるので件数を抑える
+POSE_TOL = 1e-9
 
 
 def _ref(item):
     return None if item is None else {"split": item[0], "name": item[1]}
+
+
+def select_default(candidates, init_source):
+    """既定で採る候補。引き継ぎ姿勢から始めた候補が最良と僅差なら、跳ばないようそちらを選ぶ。"""
+    if init_source == "propagated":
+        for c in candidates:
+            if c["init"] == "propagated" and c["cost"] <= candidates[0]["cost"] + PREFER_PROPAGATED_MARGIN:
+                return c
+    return candidates[0]
 
 
 class Annotator:
@@ -28,8 +40,9 @@ class Annotator:
         self.detector = detector
         self.cost_threshold = cost_threshold
         self.prefetcher = prefetcher
-        self._lock = threading.Lock()
-        self._candidates = {}  # "split/name" -> 表示用の候補 (open_frame のキャッシュ)
+        # _initialize は _lock を持ったまま候補キャッシュに触るので再入可能にする
+        self._lock = threading.RLock()
+        self._candidates = OrderedDict()  # "split/name" -> 表示用の候補 (open_frame の LRU キャッシュ)
 
     # --- 内部 ---
 
@@ -40,6 +53,21 @@ class Annotator:
     @staticmethod
     def _pose_of(entry):
         return {k: entry[k] for k in ("x", "y", "yaw", "pitch")}
+
+    def _remember_candidates(self, key, shown):
+        with self._lock:
+            self._candidates[key] = shown
+            self._candidates.move_to_end(key)
+            while len(self._candidates) > CANDIDATE_CACHE_SIZE:
+                self._candidates.popitem(last=False)
+
+    def _cached_candidates(self, key):
+        """キャッシュ済みの候補。無ければ None。"""
+        with self._lock:
+            shown = self._candidates.get(key)
+            if shown is not None:
+                self._candidates.move_to_end(key)
+            return shown
 
     def _points(self, split, name, pitch):
         mask = self.detector.mask(self.store.image_path(split, name), self._key(split, name))
@@ -109,12 +137,7 @@ class Annotator:
         cost_at_init = matching.cost(self.field, points, init) if enough else None
         if enough:
             found, shown = self._search(key, points, init, init_source, self._window(init_source), init)
-            pick = found[0]
-            if init_source == "propagated":
-                for c in found:
-                    if c["init"] == "propagated" and c["cost"] <= found[0]["cost"] + PREFER_PROPAGATED_MARGIN:
-                        pick = c
-                        break
+            pick = select_default(found, init_source)
             pose, cost = pick["pose"], pick["cost"]
             source = "propagated" if init_source == "propagated" else "auto"
         else:
@@ -123,7 +146,7 @@ class Annotator:
         flags = self._flags(cost, pose, init, self.projector.label(pose), len(points))
         entry = self.poses.set(split, name, pose, source, cost, flags,
                                init={"pose": init, "source": init_source, "cost": cost_at_init})
-        self._candidates[key] = shown
+        self._remember_candidates(key, shown)
         return entry
 
     def _entry(self, split, name):
@@ -164,13 +187,14 @@ class Annotator:
         if self.prefetcher is not None:
             self.prefetcher.set_cursor(key)
         points = self._points(split, name, pose["pitch"])
-        if key not in self._candidates:
+        shown = self._cached_candidates(key)
+        if shown is None:
             init_points = self._points(split, name, init["pose"]["pitch"])
             shown = []
             if len(init_points) >= MIN_POINTS:
                 _, shown = self._search(key, init_points, init["pose"], init["source"],
                                         self._window(init["source"]), init["pose"])
-            self._candidates[key] = shown
+            self._remember_candidates(key, shown)
         cache = {"done": 0, "total": 0}
         if self.prefetcher is not None:
             cache = dict(zip(("done", "total"), self.prefetcher.progress()))
@@ -179,7 +203,7 @@ class Annotator:
             "total": len(self.frames), "status": self.store.get_status(split, name),
             "pose": pose, "source": entry["source"], "cost": entry["cost"], "flags": entry["flags"],
             "init": init, "overlay": self.projector.overlay(pose), "bev": self.projector.bev(pose, points),
-            "label": self.projector.label(pose), "candidates": self._candidates[key],
+            "label": self.projector.label(pose), "candidates": shown,
             "prev": _ref(self.frames.prev(split, name)), "next": _ref(self.frames.next(split, name)),
             "cache": cache,
         }
@@ -200,8 +224,14 @@ class Annotator:
         return {"pose": found[0]["pose"], "cost": found[0]["cost"], "candidates": shown}
 
     def set_pose(self, split, name, pose, source):
-        init = self._entry(split, name)["init"]
+        entry = self._entry(split, name)
+        init = entry["init"]
         _, cost, _, flags = self._evaluate(split, name, pose, init["pose"])
+        # 確定済みのフレームを動かしたら、ラベルと姿勢が食い違うので未確認へ戻す
+        old = self._pose_of(entry)
+        if (self.store.get_status(split, name) == "done"
+                and any(abs(pose[k] - old[k]) > POSE_TOL for k in old)):
+            self.store.set_status(split, name, "unseen")
         return self.poses.set(split, name, pose, source, cost, flags, init)
 
     def confirm(self, split, name, pose, source):

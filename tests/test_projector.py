@@ -1,6 +1,7 @@
 import numpy as np
 
 from tools.path_annotator.pose import make_pose
+from tools.path_annotator.store import ROW_START, validate_label
 
 POSE = make_pose(5, 0, 0)
 
@@ -55,3 +56,19 @@ def test_bev_clips_window(projector):
     assert len(pts)
     assert ((pts[:, 0] >= -4) & (pts[:, 0] <= 28) & (np.abs(pts[:, 1]) <= 13)).all()
     assert out["points"] == [[2.0, 0.1]]
+
+
+def test_label_with_pitch_validates(projector):
+    label = projector.label(make_pose(5, 0, 0, pitch=3.0))
+    assert label
+    for entry in label:
+        validate_label([entry])
+        assert not any(entry["h_vector"][:ROW_START])
+
+
+def test_label_three_classes_48_rows(projector):
+    label = projector.label(make_pose(15, 0, 0))
+    assert [e["class"] for e in label] == ["straight", "left", "right"]
+    for entry in label:
+        assert len(entry["xp"]) == 48 and len(entry["h_vector"]) == 48
+    validate_label(label)

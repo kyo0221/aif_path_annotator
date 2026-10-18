@@ -174,7 +174,7 @@
       const cap = document.createElement('div');
       cap.className = 'cap';
       const cost = c.cost === null || c.cost === undefined ? '—' : c.cost.toFixed(2);
-      cap.textContent = `${i + 1}: ${cost} m  横${fmt(c.lateral_m, 2)} ヨー${fmt(c.yaw_deg, 1)}°`;
+      cap.textContent = `${i + 1}: ${cost} m  横${fmt(c.lateral_m, 2)} 前後${fmt(c.longitudinal_m, 2)} ヨー${fmt(c.yaw_deg, 1)}°`;
       card.title = c.init;
       card.append(cv, cap);
       card.onclick = () => chooseCandidate(i);
@@ -212,7 +212,7 @@
     $('tb-index').textContent = `${f.index + 1} / ${f.total}`;
     $('tb-order').textContent = S.flagOnly ? '時系列・要確認のみ' : '時系列';
     const cost = $('tb-cost');
-    const bad = flags.includes('cost');
+    const bad = flags.length > 0; // どの flag でも要確認
     cost.textContent = `照合 ${fmtCost(S.view.cost)} ${bad ? '要確認' : '良好'}`;
     cost.className = `badge ${bad ? 'warn' : 'good'}`;
     $('tb-flags').textContent = flags.join(' ');
@@ -392,8 +392,11 @@
         return msg(`姿勢の保存に失敗: ${e.message}`);
       }
     }
-    await openFrame(ref);
-    await reloadQueue();
+    try {
+      await openFrame(ref);
+    } finally {
+      await reloadQueue(); // 確定済みのフレームを動かすと unseen に戻るので、開けなくても一覧を更新する
+    }
   });
 
   const confirm = () => exclusive(async () => {
@@ -513,7 +516,8 @@
   async function start() {
     resizeCanvas();
     await loadQueue();
-    const first = S.items.find((q) => q.status !== 'done') || S.items[0];
+    // 続きは最初の unseen から。無ければ最初の done 以外（skip）、それも無ければ先頭。
+    const first = S.items.find((q) => q.status === 'unseen') || S.items.find((q) => q.status !== 'done') || S.items[0];
     if (!first) return msg('フレームがありません');
     await openFrame(first);
   }
