@@ -120,3 +120,9 @@
 照合の速度は次で測る。
 
     .venv/bin/python tools/path_annotator/scripts/bench_matching.py --osm <aiformula_course.osm> [--points 800]
+
+## 動作確認
+
+- 2026-10-18、20261012_data の val 連続 50 枚（000632〜000734）で通し確認。
+- 照合: WIDE 0.18 s、候補 4 起点 0.71 s、距離場の最大誤差 0.025 m。
+- Enter 20 回で全 20 枚を確定（400 なし）。2 枚目以降は `propagated`（image_index 差 6 の 000674 だけ GNSS から再初期化）、Enter 後の表示は先読み済みで 0.5 s 前後。横方向は白線と地図線が重なるが、引き継ぎ中に縦方向が 1 枚 0.3〜0.5 m ずつ遅れ、18 枚で約 8 m ずれた（要対応）。
