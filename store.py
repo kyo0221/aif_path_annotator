@@ -8,8 +8,16 @@ import threading
 import time
 from pathlib import Path
 
-from tools.path_annotator.curve import N_ROWS, ROW_START
+import numpy as np
 
+N_ROWS = 48     # row-anchor の行数
+ROW_START = 25  # これより上の行は学習に使わない
+
+# 棄却基準。出典: /home/kyo/formula_ws/src/learning/Models/data_parsing/rosbag/converter.py
+# の rejection_reasons と定数（ROS に依存するため import できず、同じ値と判定を写している）。
+MIN_VISIBLE_ROWS = 10       # これ未満なら経路が画像にほとんど写っていない
+EDGE_RATIO = 0.5            # 可視行のうちこの割合以上が画像端なら投影が破綻している
+EDGE_MARGIN = 0.01
 CLASSES = ("straight", "left", "right")
 STATUSES = ("unseen", "done", "skip")
 NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -49,6 +57,30 @@ def validate_label(label):
         raise ValueError("label must contain a 'straight' entry (the trainer requires it)")
     if len(classes) != len(set(classes)):
         raise ValueError(f"duplicate class in label: {classes} (the trainer keeps only the last one)")
+
+
+def rejection_reasons(label):
+    """学習に使えないラベルの理由を返す。空リストなら採用してよい。"""
+    if not label:
+        return ["経路なし"]
+
+    reasons = []
+    visible_counts = [int(np.sum(np.asarray(e["h_vector"]) > 0)) for e in label]
+    if max(visible_counts) < MIN_VISIBLE_ROWS:
+        reasons.append(f"可視行 {max(visible_counts)} < {MIN_VISIBLE_ROWS}")
+
+    # 分岐が画面外へ抜けるのは正常なので、基準になる straight だけを見る
+    for entry in label:
+        if entry["class"] != "straight":
+            continue
+        columns = np.asarray(entry["xp"], float)[np.asarray(entry["h_vector"]) > 0]
+        if columns.size == 0:
+            continue
+        at_edge = (columns <= EDGE_MARGIN) | (columns >= 1.0 - EDGE_MARGIN)
+        if at_edge.mean() >= EDGE_RATIO:
+            reasons.append(f"straight の可視行の {at_edge.mean() * 100:.0f}% が画像端")
+
+    return reasons
 
 
 def _check_name(name):
@@ -94,16 +126,19 @@ class LabelStore:
         self._state_lock = threading.Lock()
 
     def splits(self):
-        return sorted(p.name for p in (self.root / "labels").iterdir() if p.is_dir())
+        return sorted(p.name for p in (self.root / "images").iterdir() if p.is_dir())
 
     def frames(self, split):
         _check_name(split)
-        return sorted(p.stem for p in (self.root / "labels" / split).glob("*.txt"))
+        return sorted(p.stem for p in (self.root / "images" / split).glob("*.png"))
 
     def label_path(self, split, name):
         _check_name(split)
         _check_name(name)
         return self.root / "labels" / split / f"{name}.txt"
+
+    def has_label(self, split, name):
+        return self.label_path(split, name).exists()
 
     def image_path(self, split, name):
         _check_name(split)
