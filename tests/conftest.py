@@ -32,36 +32,64 @@ import numpy as np
 class StubProjector:
     """Projector の最小代替。経路は straight 1 本、y が大きいほど xp が左へ寄る。"""
 
-    def __init__(self, valid_rows=23, n_points=None):
+    def __init__(self, valid_rows=23, n_points=None, lanes=None):
         self.valid_rows = valid_rows
         self.n_points = n_points
+        self.lanes = [
+            {"id": 1, "distance_m": 0.2, "angle_deg": 3.0, "aligned": True},
+            {"id": 2, "distance_m": 0.6, "angle_deg": 85.0, "aligned": False},
+        ] if lanes is None else lanes
 
-    def _entry(self, pose):
+    def lane_candidates(self, pose, lanelet=None):
+        lanes = [dict(lane) for lane in self.lanes]
+        if lanelet is not None and all(lane["id"] != lanelet for lane in lanes):
+            if lanelet != 3:  # 3 は「遠いレーン」の例。他の未知 ID は ValueError
+                raise ValueError(f"unknown lanelet {lanelet}")
+            lanes.append({"id": lanelet, "distance_m": 9.0, "angle_deg": 10.0, "aligned": True})
+        return lanes
+
+    def auto_lanelet(self, pose):
+        return next((lane["id"] for lane in self.lanes if lane["aligned"]), None)
+
+    def resolve_lane(self, pose, lanelet=None):
+        if lanelet is None:
+            lanelet_id = self.auto_lanelet(pose)
+            auto = True
+        else:
+            lanelet_id, auto = lanelet, False
+        info = next((lane for lane in self.lane_candidates(pose, lanelet) if lane["id"] == lanelet_id), None)
+        return {"id": lanelet_id, "auto": auto,
+                "angle_deg": None if info is None else info["angle_deg"],
+                "distance_m": None if info is None else info["distance_m"]}
+
+    def _entry(self, pose, lanelet=None):
         from tools.path_annotator.store import N_ROWS, ROW_START
 
         xp = float(np.clip(0.5 - 0.1 * pose["y"], 0.0, 1.0))
         h = [0] * N_ROWS
-        for row in range(ROW_START, min(N_ROWS, ROW_START + self.valid_rows)):
-            h[row] = 1
+        if self.resolve_lane(pose, lanelet)["id"] != 2:  # 2 は横向きレーン: straight が引けない
+            for row in range(ROW_START, min(N_ROWS, ROW_START + self.valid_rows)):
+                h[row] = 1
         return {"class": "straight", "xp": [xp if v else 0.0 for v in h], "h_vector": h}
 
-    def overlay(self, pose):
+    def overlay(self, pose, lanelet=None):
         return {
             "lines": [[[0.1, 0.9], [0.4, 0.5]]],
             "paths": {"straight": [[0.5, 0.9], [0.5, 0.5]]},
-            "rows": self._entry(pose),
+            "rows": self._entry(pose, lanelet),
         }
 
-    def label(self, pose):
-        return [self._entry(pose)]
+    def label(self, pose, lanelet=None):
+        entry = self._entry(pose, lanelet)
+        return [entry] if any(entry["h_vector"]) else []
 
     def bev_points(self, mask, pitch=0.0, x_range=None):
         xs = np.arange(1.6, 7.0 + 1e-9, 0.2)
         pts = np.array([[x, y] for y in (-1.65, 1.65) for x in xs])
         return pts if self.n_points is None else pts[: self.n_points]
 
-    def bev(self, pose, points):
-        return {"lines": [], "paths": {}, "points": np.asarray(points).tolist()}
+    def bev(self, pose, points, lanelet=None):
+        return {"lines": [], "paths": {}, "points": np.asarray(points).tolist(), "lanes": []}
 
 
 class FakeDetector:

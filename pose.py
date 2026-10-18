@@ -77,15 +77,19 @@ class PoseStore:
 
     def get(self, split, name):
         with self._lock:
-            return self._load()["frames"].get(f"{split}/{name}")
+            entry = self._load()["frames"].get(f"{split}/{name}")
+            if entry is not None:
+                entry.setdefault("lanelet", None)  # レーン選択の導入前に保存したエントリ
+            return entry
 
-    def set(self, split, name, pose, source, cost, flags, init):
+    def set(self, split, name, pose, source, cost, flags, init, lanelet=None):
         entry = {
             "x": pose["x"], "y": pose["y"], "yaw": pose["yaw"], "pitch": pose["pitch"],
             "source": source,
             "cost": None if cost is None else float(cost),
             "flags": list(flags),
             "init": init,
+            "lanelet": lanelet,  # 使用レーンの ID。None は自動
             "ts": time.time(),
         }
         # キャッシュの変異とシリアライズを一括で排他する (LabelStore._update_frame_state と同じ)。

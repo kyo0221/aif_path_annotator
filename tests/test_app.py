@@ -116,3 +116,57 @@ def test_default_takes_best_beyond_margin():
 
     found = [{"init": "gnss", "cost": 0.19}, {"init": "propagated", "cost": 0.24}]
     assert select_default(found, "propagated")["init"] == "gnss"
+
+
+def test_open_frame_has_lanes(annotator):
+    r = annotator.open_frame("train", "f000000")
+    assert r["lanelet"] is None
+    assert r["lanes"][0]["auto"] and r["lanes"][0]["selected"]
+    assert r["lanes"][1]["aligned"] is False and not r["lanes"][1]["selected"]
+
+
+def test_preview_with_lanelet(annotator):
+    r = annotator.open_frame("train", "f000000")
+    p = annotator.preview("train", "f000000", r["pose"], lanelet=2)
+    assert "lane" in p["flags"] and "no_path" in p["flags"]
+    assert p["label"] == []
+    assert p["lanelet"] == 2
+    assert p["lanes"][1]["selected"] and not p["lanes"][0]["selected"]
+
+
+def test_set_pose_saves_lanelet(annotator):
+    r = annotator.open_frame("train", "f000000")
+    annotator.set_pose("train", "f000000", r["pose"], "manual", lanelet=2)
+    assert annotator.poses.get("train", "f000000")["lanelet"] == 2
+    assert annotator.open_frame("train", "f000000")["lanelet"] == 2
+
+
+def test_set_pose_lanelet_change_unconfirms(annotator):
+    r = annotator.open_frame("train", "f000000")
+    annotator.confirm("train", "f000000", r["pose"], "auto")
+    annotator.set_pose("train", "f000000", r["pose"], "manual", lanelet=1)
+    assert annotator.store.get_status("train", "f000000") == "unseen"
+
+
+def test_confirm_with_crossing_lane_is_rejected(annotator):
+    r = annotator.open_frame("train", "f000000")
+    with pytest.raises(ValueError, match="レーンを選び直す"):
+        annotator.confirm("train", "f000000", r["pose"], "auto", lanelet=2)
+
+
+def test_confirm_with_lanelet_saves_it(annotator):
+    r = annotator.open_frame("train", "f000000")
+    assert annotator.confirm("train", "f000000", r["pose"], "auto", lanelet=1)["ok"]
+    assert annotator.poses.get("train", "f000000")["lanelet"] == 1
+
+
+def test_lane_flag_when_auto_falls_back(make_annotator):
+    from conftest import StubProjector
+    a = make_annotator(projector=StubProjector(lanes=[]))
+    assert "lane" in a.open_frame("train", "f000000")["flags"]
+
+
+def test_unknown_lanelet_is_value_error(annotator):
+    r = annotator.open_frame("train", "f000000")
+    with pytest.raises(ValueError):
+        annotator.preview("train", "f000000", r["pose"], lanelet=999)

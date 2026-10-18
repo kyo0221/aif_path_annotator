@@ -43,3 +43,18 @@ def test_pose_store_corrupt_file(tmp_path):
     assert s.get("train", "a") is None
     s.set("train", "a", make_pose(0, 0, 0), "manual", None, [], None)
     assert "train/a" in json.loads((tmp_path / "poses.json").read_text())["frames"]
+
+
+def test_pose_store_lanelet_roundtrip(tmp_path):
+    store = PoseStore(tmp_path)
+    pose = make_pose(1, 2, 0.1)
+    store.set("train", "a", pose, "manual", 0.1, [], {"pose": pose, "source": "gnss", "cost": None}, lanelet=5)
+    assert store.get("train", "a")["lanelet"] == 5
+    store.set("train", "b", pose, "manual", 0.1, [], {"pose": pose, "source": "gnss", "cost": None})
+    assert store.get("train", "b")["lanelet"] is None
+
+
+def test_pose_store_old_entry_has_no_lanelet(tmp_path):
+    (tmp_path / "poses.json").write_text(json.dumps({"frames": {"train/a": {
+        "x": 0, "y": 0, "yaw": 0, "pitch": 0, "source": "auto", "cost": None, "flags": [], "init": {}, "ts": 0}}}))
+    assert PoseStore(tmp_path).get("train", "a")["lanelet"] is None
