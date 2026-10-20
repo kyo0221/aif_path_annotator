@@ -1,75 +1,148 @@
-# 経路ラベル アノテーションツール
+# 地図投影アノテータ
 
-`labels/<split>/<frame>.txt` の経路ラベル（`xp` / `h_vector` / `class`）を手で直すためのローカル Web ツール。
+ベクターマップを車両姿勢から画像へ投影して、48 行の経路ラベル（`labels/<split>/<name>.txt`）を作るローカル Web ツール。
+人が点を打つのではなく、フレームごとの車両姿勢（x, y, ヨー, ピッチ）を俯瞰図・候補・キーで直し、地図の線が画像の白線に合ったところで確定する。
 
-## 実行コマンド
+## 必要なもの
 
-    python3 tools/path_annotator/annotate.py --root <データセットのルート>
+- Python 3.12 の venv（CPU 版 torch 入り）。例では `/home/kyo/aif_dataset/.venv`。
+- 学習リポジトリ（`--learning-repo`。投影コードの取得元）。
+- vectormap（`aiformula_course.osm`）、YOLOPv2 の重み（`yolopv2.pt`）、カメラ外部パラメータの `main_params.yaml`。
+- データセットのルート: `images/<split>/*.png` と `gnss.json`。`labels/` は無くてよい。
+  `gnss.json` には各フレームの `map.x` / `map.y` / `map.yaw_imu_rad` / `map.yaw_motion_rad`、`bag`、`image_index`、`stamp` が要る。
 
-例:
+## 起動コマンド
 
-    python3 tools/path_annotator/annotate.py --root dataset/sim/dataset_v2
+    cd /home/kyo/aif_dataset
+    PYTHONDONTWRITEBYTECODE=1 .venv/bin/python tools/path_annotator/annotate.py \
+      --root /home/kyo/aif_dataset/20261012_data \
+      --learning-repo /home/kyo/formula_ws/src/learning \
+      --vectormap /home/kyo/formula_ws/src/map/vectormap_server/config/aiformula_course.osm \
+      --yolop /home/kyo/formula_ws/src/perception/road_detector/weights/yolopv2.pt \
+      --params /home/kyo/formula_ws/src/main_executor/config/main_params.yaml
 
 引数:
 
-- `--root`（必須）: データセットのルート。`images/<split>/*.png` と `labels/<split>/*.txt` を含むディレクトリを指定する。
-- `--port`: 待受ポート（既定 8765）。使用中なら変える。
-- `--no-browser`: 起動時にブラウザを自動で開かない。
-- `--weights`: 推論に使う重みファイル。指定するとキューを「既存ラベルと推論ラベルの乖離」の大きい順にする（無指定なら従来どおり異常スコア順）。
-- `--learning-repo`: ネットワーク実装のあるリポジトリ（`--weights` と併用必須）。
-- `--branch-threshold`: 自動アノテーションで left/right を出す最小の横差、px 単位（既定 60.0）。
-- `--vectormap`: vectormap（`aiformula_course.osm`）。指定すると、GNSS と白線の俯瞰照合で straight 経路を作る機能（`v` キー / 地図ボタン）が有効になる。
-  `--yolop`（YOLOP の TorchScript 重み）、`--params`（カメラ外部パラメータの `main_params.yaml`）、`--learning-repo` と併用する。
-  データセットのルートに `gnss.json`（`tools/label_audit/add_gnss.py` で作成。フレームごとの GNSS 位置・ヨー）が必要。
+- `--root`（必須）: データセットのルート。
+- `--learning-repo` / `--vectormap` / `--yolop` / `--params`（4 つとも必須）: 上記のとおり。
+- `--port`: 待受ポート（既定 8765）。
+- `--no-browser`: ブラウザを自動で開かない。
+- `--cost-threshold`: 要確認フラグ `cost` を立てる照合コストのしきい値、m（既定 0.25）。候補の採否には使わない。
 
-vectormap 照合の例:
+## 画面
 
-    python3 tools/path_annotator/annotate.py --root ~/aiformula_dataset/real/manual_annotation/base \
-      --learning-repo ~/formula_ws/src/learning \
-      --vectormap ~/formula_ws/src/map/vectormap_server/config/aiformula_course.osm \
-      --yolop ~/formula_ws/src/perception/road_detector/data/weights/yolopv2.pt \
-      --params ~/formula_ws/src/main_executor/config/main_params.yaml
+- 上部バー: フレーム名、位置（n / 全体）、順序（時系列）、照合コストのバッジ、要確認フラグ、YOLOP キャッシュの状況。
+  バッジは要確認フラグが 1 つでもあれば橙の「要確認」、無ければ緑の「良好」（例: `照合 0.20 m 要確認`）。
+- 左: 画像。地図の線（シアン `#00c8ff`）と YOLOP の白線マスク（緑 `#00dc00`）を半透明で重ねる。
+  経路ラベルは straight が黄 `#ffe600`、left が桃 `#ff78ff`、right が橙 `#ff8c00`。
+- 右列: 俯瞰図（BEV）、ヨー調整ダイヤルと使用レーンの一覧、数値（補正量・コスト・行数・姿勢の出どころ）、不透明度スライダー（投影・検出）、キュー。
+  - 俯瞰図: 地図線・経路・白線点に加え、近くのレーン候補の中心線を薄いシアンの破線で描き、`#<id>` を添える。
+  - ダイヤル: ハンドルの絵。回した向きにヨーが変わり、中央に初期値からのヨー補正量を出す。
+  - 使用レーン: 経路を辿り始めるレーン。先頭行の「自動（#id）」は自動選択（いま自動で選ばれるレーンの ID。該当が無く従来規則に落ちるときは「自動（従来規則）」）、
+    以下は候補ごとに `#id  距離 m  進行方向との角度°`（向きの合うものが先、最大 6 件）。選んでいる行が強調され、
+    進行方向から 60° 以上ずれたレーンの行は薄い橙で出る。行をクリックするとそのレーンに固定する（自動の行で自動に戻る）。
+- 下: 照合の候補（最大 4 枚）。クリックまたは `1`〜`4` で姿勢をその候補にする。
 
-照合の手順（`vectormap_match.py`）: `gnss.json` の地図座標の位置と IMU ヨーを初期値に、YOLOP の白線を車両前方 1.6〜7m の俯瞰座標
-（カメラ行列・平坦路面）へ変換し、vectormap の観測可能な線へ横 ±1.5m・前後 ±1.5m・ヨー ±8° の格子探索で照合して姿勢を補正する。
-補正後の位置から自車の lanelet の中心線を前方 20m たどってカメラへ投影し、straight だけを置き換える（left/right は残す、undo 可）。
-HUD に補正量と照合コスト（白線点と地図線の平均距離）を出し、0.25m を超えると「照合不良: 要確認」と表示する。
+## 操作
 
-## 操作方法
-
-画面右上のバッジで add / delete モードを切り替える（`d` キー、既定 add）。
-クリックの意味はモードで決まる: add は点を置く（既存の点があれば位置を更新するだけで消さない）、
-delete は点を消す。どちらのモードでも、クリックした行が次の範囲操作の始点になり、
-続けて `Shift+クリック` で終点を指定すると、始点〜終点（両端含む）をまとめて
-add なら直線補間、delete なら削除できる。始点マーカーはバッジと同じ色（add: 緑 / delete: 赤）
-かつ色だけに頼らない形（add: 輪 / delete: ×印）で描かれ、バッジを見なくても区別できる。
-始点は次でクリア（解除）される: フレーム移動、エントリ切替（`Tab`）、モード切替（`d`）、
-エントリ追加・削除（`n` / `x`。undo/redo も含めていずれも内部の epoch が進むため自動的に無効になる）、
-Shift+クリックによる範囲操作の実行後。行 0〜24（`ROW_START` 未満）はどちらの操作も受け付けない。
-
-`--weights` を指定して起動した場合、モードバッジの左隣の「自動」ボタン（または `a` キー）で、
-このフレームを推論したラベルに丸ごと置き換えられる（保存前と同様 `u` で undo 可）。
-重みを指定していないときは押すと HUD にエラーが出る。
-
-## キーバインド
-
-| キー／操作 | 動作 |
+| キー | 動作 |
 |---|---|
-| ドラッグ | 制御点を動かす（近傍行が滑らかに追従） |
-| `←` `→` | 前／次フレーム |
-| `Enter` | 確認済みにして次へ |
-| `h` `l` / `Shift+h` `Shift+l` | 全体を左右に 1px / 5px |
-| `j` `k` | 傾き変更（下端固定で上端を左右） |
-| `1` `2` `3` | class を straight / left / right |
-| `d` | add / delete モードの切替（既定 add、右上のバッジに表示） |
-| `a` / 自動ボタン | このフレームを推論し、返ったラベルで丸ごと置き換える（`--weights` 指定時のみ。無指定なら HUD にエラー） |
-| `v` / 地図ボタン | GNSS + 俯瞰照合 + vectormap のレーン中央で straight だけを置き換える（`--vectormap` 指定時のみ、undo 可） |
-| 行をクリック | add: 点を置く（既存でも位置更新・消さない） ／ delete: 点を消す（無ければ何もしない）。行 0〜24 は編集不可 |
-| `Shift+クリック` | 始点〜その行を add: 直線補間 ／ delete: まとめて削除（両端含む）。始点未選択なら HUD に警告 |
-| 始点のクリア（解除）条件 | フレーム移動 / `Tab` / `d` / `n` `x`（エントリ増減。undo・redo も epoch が進むため自動的に無効）/ Shift+クリックの実行後 |
-| `n` / `x` / `Tab` | 未使用の class でエントリ追加 / 削除（`straight` は削除不可）/ 切替 |
-| `p` | 前後 ±N フレームへ伝播 |
-| `,` `.` | 伝播幅 N を 1〜50 で増減（既定 5） |
-| `[` `]` | 制御点数 K を 1〜5 で増減 |
-| `R` | 制御点から曲線を再生成 |
-| `u` / `Ctrl+u` | undo / redo |
+| Enter | 確定して次へ |
+| ← → | 前 / 次のフレーム（姿勢は保存される） |
+| h l | 横へ動かす |
+| j k | 前後へ動かす |
+| u i | ヨー |
+| , . | ピッチ |
+| Shift + 上の移動キー | 5 倍の刻み |
+| Esc | 初期値へ戻す（使用レーンも自動に戻す） |
+| z / Shift+z | 戻す / やり直す |
+| g | 白線マスクの表示切替 |
+| m | 地図線の表示切替 |
+| [ ] | 投影の不透明度を下げる / 上げる |
+| o | 押している間だけ素の画像 |
+| s | skip |
+| f | 要確認のフレームだけ巡回（切替） |
+| 1〜4 | 候補を選ぶ |
+| r | 広い窓で再探索 |
+| t | 使用レーンを巡回（自動 → 一覧の 1 番目 → 2 番目 → … → 自動） |
+| ダイヤルをドラッグ | ヨー（Shift で 5 倍） |
+| ダイヤルをダブルクリック | ヨーを初期値へ |
+| + - | 俯瞰の縮尺 |
+
+俯瞰図ではドラッグで横・前後、ホイールでヨーを動かす。スライダーで投影・検出の不透明度を変える。
+使用レーンの変更も姿勢と同じく `z` で戻せる。候補（`1`〜`4`・`r`）を選んでも使用レーンは変わらない。
+
+## 進め方
+
+時系列に並べたフレームを先頭から見る。各フレームは前フレームの姿勢を引き継いだ初期値で開く
+（最初のフレームは GNSS の初期姿勢）。必要なら候補・キーで直し、Enter で確定する。
+確定するとその姿勢でラベルを保存して次のフレームへ進み、次の初期値には確定した姿勢が使われる。
+経路が隣のレーンや横切るレーンから辿られているときは、`t` か一覧で使用レーンを選び直す。
+`Esc` は姿勢と使用レーンの両方を初期値（自動）へ戻す。
+`f` で「要確認」フラグ付きのフレームだけに絞れる。
+
+## 要確認フラグ
+
+- `cost`: 照合コストがしきい値（`--cost-threshold`）を超える。
+- `jump`: 引き継いだ初期値から横 0.3 m、またはヨー 2° を超えて動いた。
+- `no_path`: straight 経路が取れない。
+- `few_points`: 白線の点が 30 未満。
+- `pitch`: ピッチが 0 ではない。
+- `lane`: 使っているレーンが進行方向から 60° 以上ずれている、または自動選択が従来規則に落ちた。
+
+## 確定時の棄却基準
+
+`converter.py` と同じ基準で、次の場合は確定できない（400 を返し、メッセージを出す）。
+
+- 可視行が 10 行未満。
+- straight の可視行の 50% 以上が画像端にある。
+- straight 経路を投影できない（「straight 経路を投影できません（レーンを選び直すか Esc で初期値へ）」）。
+- ラベルの検査（`store.validate_label`: 48 行、xp が 0〜1、25 行目より上は h_vector が 0 など）に通らない。
+
+## 保存されるファイル（`--root` 以下）
+
+- `labels/<split>/<name>.txt`: 48 行形式（従来どおり）。
+- `poses.json`: 開いたフレームごとの姿勢（確定したかどうかに関わらず。確定済みのフレームの姿勢を動かすと状態は unseen に戻る）。
+- `annotation_state.json`: フレームごとの状態（done / skip など）。
+- `labels_backup/`: 上書き前の既存ラベルの退避。
+- `cache/yolop/`: YOLOP マスクのキャッシュ。消しても再計算される。
+- `excluded/`: `exclude_skipped.py` が移した skip フレーム。
+
+## skip したフレームを除外する
+
+    .venv/bin/python tools/path_annotator/exclude_skipped.py --root <dataset> [--dry-run]
+
+`annotation_state.json` で skip のフレームの画像とラベルを `excluded/<split>/` へ移す。
+戻すには同名ファイルを `images/`・`labels/` へ戻す。`--dry-run` は移さずに一覧だけ出す。
+
+## 照合の仕組み
+
+1. GNSS の位置と IMU ヨーから初期姿勢を作る。IMU ヨーには bag ごとの偏りがあるので、補正してから使う。
+2. YOLOP の白線マスクを、カメラ行列と平坦路面の仮定で車両前方の俯瞰座標の点へ変換する。
+3. vectormap の観測可能な線から距離場を作り、白線点の平均距離（コスト）が小さくなる姿勢を探す。
+4. 探索窓は初期値の出どころで変わる。GNSS から初期化したフレームは広い窓、確定済みの直前フレームから引き継いだフレームは狭い窓で探す。`r` キーは今の姿勢から広い窓で探し直す。コストの低い順に候補を最大 4 つ出す。
+   直線路では白線が進行方向と平行でコストが前後に平らになるため、仮説の選択だけに初期姿勢からの前後移動量 1 m あたり 0.05 の罰則（`LONGITUDINAL_PENALTY`）を加え、前後位置が流れないようにしている（出力のコストは罰則を含まない）。
+5. 選んだ姿勢で自車の経路中心線を投影して 48 行のラベルにする。経路を辿り始めるレーンは、自動では 5 m 以内で向きが進行方向から 60° 以内の中心線のうち最も近いもの
+   （該当が無ければ従来の規則に任せ、`lane` フラグを立てる）。8 m 以内のほかの中心線も候補として一覧に出し、`t` か一覧のクリックで選べる。
+
+## テスト
+
+    cd /home/kyo/aif_dataset
+    PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m pytest tools/path_annotator/tests -q
+
+`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` は、ROS の PYTHONPATH が持つ pytest プラグイン（`lark` を import する）を読ませないため。
+`PYTHONDONTWRITEBYTECODE=1` は `__pycache__` を作らせないため。
+`projector` のテストは学習リポジトリが無いと skip される。
+
+照合の速度は次で測る。
+
+    .venv/bin/python tools/path_annotator/scripts/bench_matching.py --osm <aiformula_course.osm> [--points 800]
+
+## 動作確認
+
+- 2026-10-18、20261012_data の val 連続 50 枚（000632〜000734）で通し確認。
+- 照合: WIDE 0.18 s、候補 4 起点 0.71 s、距離場の最大誤差 0.025 m。
+- Enter 20 回で全 20 枚を確定（400 なし）。2 枚目以降は `propagated`（image_index 差 6 の 000674 だけ GNSS から再初期化）、Enter 後の表示は先読み済みで 0.5 s 前後。横方向は白線と地図線が重なる。縦方向は前後罰則の導入前は引き継ぎ中に 1 枚 0.3〜0.5 m ずつ遅れ 18 枚で約 8 m ずれたが、導入後は解消した（次項）。
+- 前後罰則の導入後に同じ 20 回を再実行: GNSS 位置に対する前後の差は ±0.13 m 以内で単調な増加なし（導入前は 18 枚で −7.9 m）。
+- 2026-10-18、bag 先頭（20261012_data の train 000000〜000032、13 枚）で確認: 交差点内で起動時は横切るレーンが最寄りだったが、自動レーンは進行方向のレーン #302（距離 1.2 m・角度 9°）になり、000000・000010・000012 の 3 枚とも確定できた（変更前は 0/3）。以降の 13 枚も全て確定（400 なし）。
+- 000000 で横切るレーン #336（84°）を手動で選ぶと `lane` と `no_path` のフラグが立ち、straight の行は 0 になる（レーンを選び直せば戻る）。

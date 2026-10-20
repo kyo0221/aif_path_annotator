@@ -1,0 +1,5 @@
+/**:
+  ros__parameters:
+    camera:
+      position: {x: -0.008, y: 0.0325, z: 0.5547}
+      orientation: {roll: -89.801314, pitch: 0.497098, yaw: -89.640661}
