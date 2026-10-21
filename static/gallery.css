@@ -1,0 +1,53 @@
+/* 一覧ページ。配色・カードは preview/index.html（静的な一覧）を踏襲 */
+:root{
+  --bg:#f6f7f9;--fg:#1b1f24;--muted:#5c6570;--card:#ffffff;--line:#d9dee5;--accent:#0b6bcb;
+  --chip:#eef1f5;--warn:#b35c00;--warnbg:#fff3e0;--bad:#b00020;--badbg:#fde7ea;--good:#1a7f4b;--goodbg:#e3f5ea;
+  --c-map:#00c8ff;--c-straight:#ffe600;--c-left:#ff78ff;--c-right:#ff8c00;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#121417;--fg:#e6e9ee;--muted:#9aa4b1;--card:#1b1f25;--line:#2b323b;--accent:#6ab0ff;
+    --chip:#262c35;--warn:#ffb866;--warnbg:#3a2a12;--bad:#ff8a9a;--badbg:#3a1a20;--good:#6fd39a;--goodbg:#15311f;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121417;--fg:#e6e9ee;--muted:#9aa4b1;--card:#1b1f25;--line:#2b323b;--accent:#6ab0ff;
+  --chip:#262c35;--warn:#ffb866;--warnbg:#3a2a12;--bad:#ff8a9a;--badbg:#3a1a20;--good:#6fd39a;--goodbg:#15311f;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 16px}
+h1{font-size:16px;margin:0 0 6px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1 small{color:var(--muted);font-weight:400}
+h1 a{margin-left:auto;font-size:13px;font-weight:400;color:var(--accent)}
+.controls{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center}
+.controls label{display:flex;align-items:center;gap:4px;color:var(--muted);white-space:nowrap}
+select,input[type=search]{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 6px;font:inherit}
+input[type=search]{min-width:160px}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;color:var(--muted)}
+.legend span::before{content:"";display:inline-block;width:18px;height:4px;border-radius:2px;margin-right:5px;vertical-align:middle;background:var(--sw)}
+main{padding:12px 16px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--thumb,320px),1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;cursor:pointer}
+.card:hover{border-color:var(--accent)}
+.card.last{outline:2px solid var(--accent)}
+.card img{display:block;width:100%;aspect-ratio:640/384;object-fit:cover;background:#000}
+.cap{padding:6px 8px;font-size:12px}
+.cap .name{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cap .sub{color:var(--muted);display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.chip{background:var(--chip);border-radius:4px;padding:0 5px}
+.chip.warn{background:var(--warnbg);color:var(--warn)}
+.chip.bad{background:var(--badbg);color:var(--bad)}
+.chip.cls{color:#000;font-weight:600}
+.chip.acc{background:var(--accent);color:#fff}
+.chip.status-unseen{background:var(--chip);color:var(--muted)}
+.chip.status-done{background:var(--goodbg);color:var(--good);font-weight:600}
+.chip.status-skip{background:var(--warnbg);color:var(--warn);font-weight:600}
+.chip.pose-none{background:transparent;border:1px solid var(--line);color:var(--muted)}
+#sentinel{height:1px}
+.empty{color:var(--muted);padding:40px;text-align:center}
+/* アノテーション画面（iframe）を画面いっぱいに重ねる。一覧の DOM はそのまま残す */
+#annot{position:fixed;inset:0;z-index:20;background:#14161a}
+#annot[hidden]{display:none}
+#annot iframe{display:block;width:100%;height:100%;border:0}
+@media (max-width:600px){.grid{grid-template-columns:1fr}}

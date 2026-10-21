@@ -22,10 +22,12 @@ def make_handler(app):
 
         # --- 送信ヘルパ ---
 
-        def _send(self, code, body, content_type):
+        def _send(self, code, body, content_type, extra_headers=None):
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            for k, v in (extra_headers or {}).items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
 
@@ -77,7 +79,9 @@ def make_handler(app):
 
             def route():
                 if u.path == "/":
-                    return self._static("index.html")
+                    return self._static("gallery.html")  # 一覧（投影画像のグリッド）
+                if u.path == "/annotate":
+                    return self._static("index.html")  # アノテーション画面（従来 / 一覧から iframe で開く）
                 if parts[:1] == ["static"] and len(parts) == 2:
                     return self._static(parts[1])
                 if parts[:2] == ["api", "queue"] and len(parts) == 2:
@@ -88,6 +92,10 @@ def make_handler(app):
                     return self._image(parts[2], parts[3])
                 if len(parts) == 4 and parts[:2] == ["api", "mask"]:
                     return self._mask(parts[2], parts[3])
+                if parts == ["api", "gallery"]:
+                    return self._json(app.gallery.table()) or True
+                if len(parts) == 4 and parts[:2] == ["api", "thumb"] and parts[3].endswith(".jpg"):
+                    return self._thumb(parts[2], parts[3][:-4])
                 return False
 
             self._guard(route)
@@ -95,7 +103,7 @@ def make_handler(app):
         def do_POST(self):
             path = urlparse(self.path).path
             if path not in ("/api/preview", "/api/match", "/api/pose",
-                            "/api/confirm", "/api/status"):
+                            "/api/confirm", "/api/status", "/api/save"):
                 self._drain()
                 return self._error(404, "not found")
 
@@ -113,6 +121,8 @@ def make_handler(app):
                     out = {"ok": True}
                 elif path == "/api/confirm":
                     out = app.confirm(split, name, p["pose"], p["source"], lanelet)
+                elif path == "/api/save":
+                    out = app.save(split, name, p["pose"], p["source"], lanelet)
                 else:
                     app.set_status(split, name, p["status"])
                     out = {"ok": True}
@@ -151,6 +161,12 @@ def make_handler(app):
             if not path.is_file():
                 return False
             self._send(200, path.read_bytes(), "image/png")
+            return True
+
+        def _thumb(self, split, name):
+            """投影画像の JPEG。ページ側が ?v= で取り直すので、ブラウザには再検証させる。"""
+            data = app.gallery.thumb(split, name)
+            self._send(200, data, "image/jpeg", {"Cache-Control": "no-cache"})
             return True
 
         def _mask(self, split, name):

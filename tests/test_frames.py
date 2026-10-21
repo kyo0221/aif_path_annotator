@@ -1,3 +1,5 @@
+import pytest
+
 from tools.path_annotator.frames import MAX_INDEX_GAP, FrameIndex, parse_frame_name
 
 
@@ -53,3 +55,10 @@ def test_unknown_frame_raises_keyerror():
     for fn in (idx.position, idx.prev, idx.next, idx.predecessor):
         with pytest.raises(KeyError):
             fn("train", "nope")
+
+
+def test_bag_index_is_public():
+    index = FrameIndex([("train", "bagA_000010"), ("val", "bagA_000012")], {})
+    assert index.bag_index("train", "bagA_000010") == ("bagA", 10)
+    with pytest.raises(KeyError):
+        index.bag_index("train", "nope_000000")

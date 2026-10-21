@@ -66,3 +66,15 @@ def test_save_creates_labels_dir(tmp_path):
     store.save("train", "a", label)
     assert (tmp_path / "labels" / "train" / "a.txt").exists()
     assert store.load("train", "a") == label
+
+
+def test_save_edited_none_keeps_previous_value(tmp_path):
+    store = LabelStore(tmp_path)
+    (tmp_path / "images" / "train").mkdir(parents=True)
+    label = [{"class": "straight", "xp": [0.5] * 48, "h_vector": [0] * 25 + [1] * 23}]
+    store.save("train", "f000000", label, edited=False)
+    assert store.load_state()["frames"]["train/f000000"]["edited"] is False
+    store.save("train", "f000000", label, edited=None)
+    assert store.load_state()["frames"]["train/f000000"]["edited"] is False
+    store.save("train", "f000000", label)
+    assert store.load_state()["frames"]["train/f000000"]["edited"] is True

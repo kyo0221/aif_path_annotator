@@ -3,6 +3,7 @@ import threading
 from collections import OrderedDict
 
 from tools.path_annotator import matching
+from tools.path_annotator.gallery import Gallery
 from tools.path_annotator.pose import pose_delta, shift_pose
 from tools.path_annotator.projector import LANE_ALIGN_DEG
 from tools.path_annotator.store import rejection_reasons, validate_label
@@ -44,6 +45,7 @@ class Annotator:
         # _initialize は _lock を持ったまま候補キャッシュに触るので再入可能にする
         self._lock = threading.RLock()
         self._candidates = OrderedDict()  # "split/name" -> 表示用の候補 (open_frame の LRU キャッシュ)
+        self.gallery = Gallery(store, poses, frames, gnss, projector)
 
     # --- 内部 ---
 
@@ -231,6 +233,7 @@ class Annotator:
             "lanelet": lanelet, "lanes": self._lanes(pose, lanelet),
             "prev": _ref(self.frames.prev(split, name)), "next": _ref(self.frames.next(split, name)),
             "cache": cache, "lane_note": lane_note,
+            "thumb_version": self.gallery.thumb_version(split, name),  # 開くと姿勢が初期化されるので一覧がカードを更新できるように
         }
 
     def preview(self, split, name, pose, lanelet=None):
@@ -279,3 +282,37 @@ class Annotator:
 
     def set_status(self, split, name, status):
         self.store.set_status(split, name, status)
+
+    def save(self, split, name, pose, source, lanelet=None):
+        """姿勢を保存し、ラベルが有効なら書いて done にする（一覧から開いたときの自動保存。Enter は要らない）。
+
+        ラベルが確定の基準（straight あり・validate_label・rejection_reasons）に掛かるときはラベルを前のまま残し、
+        done なら unseen に戻す（ラベルと姿勢が食い違うため）。edited は書くラベルが既存ファイルと違うときだけ真にする。
+        """
+        entry = self._entry(split, name)
+        init = entry["init"]
+        cost, flags, label, lane = self._evaluate(split, name, pose, init["pose"], lanelet)
+        self.poses.set(split, name, pose, source, cost, flags, init, lanelet=lanelet)
+        if not self._has_straight(label):
+            reasons = ["straight 経路を投影できません（レーンを選び直すか Esc で初期値へ）"]
+        else:
+            try:
+                validate_label(label)
+            except ValueError as e:
+                reasons = [str(e)]
+            else:
+                reasons = rejection_reasons(label)
+        if not reasons:
+            changed = not self.store.has_label(split, name) or self.store.load(split, name) != label
+            self.store.save(split, name, label, edited=True if changed else None)
+            self.store.set_status(split, name, "done")
+        elif self.store.get_status(split, name) == "done":
+            self.store.set_status(split, name, "unseen")
+        info = self.gallery.label_info(split, name)
+        state = self.store.load_state()["frames"].get(self._key(split, name), {})
+        return {
+            "saved": not reasons, "status": self.store.get_status(split, name), "reasons": reasons,
+            "flags": flags, "cost": cost, "label": label, "lanelet": lane["id"], "lanes": self._lanes(pose, lanelet),
+            "classes": info["classes"], "rows": info["rows"], "edited": bool(state.get("edited", False)),
+            "thumb_version": self.gallery.thumb_version(split, name),
+        }

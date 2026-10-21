@@ -24,6 +24,20 @@
     lanes: [],      // レーン候補 [{id, distance_m, angle_deg, aligned, auto, selected}]（frame か preview の応答）
   };
 
+  // 一覧（/）から iframe で開かれたときは ?mode=gallery。姿勢を変えるたびに /api/save で保存し、q で一覧へ戻る。
+  const PARAMS = new URLSearchParams(location.search);
+  const inParent = window.parent !== window;
+  S.mode = PARAMS.get('mode') === 'gallery' ? 'gallery' : 'classic';
+  S.saving = false;     // /api/save を送信中
+  S.saveLatest = null;  // 送信中に変わった最新の姿勢（応答後に送り直す）
+  S.saveCount = 0;      // 自己テスト用: /api/save を送った回数
+  S.lastSave = null;    // 今のフレームに対する最後の /api/save の応答
+  S.saveFailed = false; // 今のフレームの最後の /api/save が失敗した（直るまで Enter / ← → / s / q で離れない）
+  const isGallery = () => S.mode === 'gallery';
+  const GALLERY_KEYS = 'Enter そのまま保存して次へ ｜ q 一覧へ戻る ｜ ← → 前/次（一覧の順） ｜ h l 横 ｜ j k 前後 ｜ u i ヨー ｜ , . ピッチ（Shift で 5 倍）'
+    + ' ｜ Esc 初期値へ ｜ z / Shift+z 戻す/やり直す ｜ g マスク ｜ m 地図線 ｜ [ ] 投影の不透明度 ｜ o 押す間は素の画像 ｜ s skip'
+    + ' ｜ t 使用レーンを巡回 ｜ 1〜4 候補を選ぶ ｜ r 広く再探索 ｜ + - 俯瞰の縮尺';
+
   const api = {
     // r.ok を見ないと、/api/frame などが 400/500 を返したときに body が
     // {error: ...} のまま呼び出し側へ渡り、後続の参照が未捕捉の TypeError になる
@@ -46,6 +60,33 @@
   const msg = (t) => { $('msg').textContent = t || ''; };
   window.onerror = (m) => { msg(`JS エラー: ${m}`); };
   window.addEventListener('unhandledrejection', (ev) => msg(`JS エラー: ${ev.reason && ev.reason.message}`));
+
+  // --- 一覧（親ページ）とのやり取り ---
+
+  function notifyParent(m) {
+    if (inParent) window.parent.postMessage(m, location.origin);
+  }
+
+  function parseRef(text) {
+    if (!text) return null;
+    const i = text.indexOf('/');
+    return i > 0 ? { split: text.slice(0, i), name: text.slice(i + 1) } : null;
+  }
+
+  // 親から絞り込み済みのキューを受け取る。親がいない、または timeoutMs 内に来なければ null。
+  function queueFromParent(timeoutMs) {
+    if (!inParent) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const done = (items) => { clearTimeout(timer); window.removeEventListener('message', onMsg); resolve(items); };
+      const timer = setTimeout(() => done(null), timeoutMs);
+      function onMsg(ev) {
+        if (ev.origin !== location.origin || !ev.data || ev.data.type !== 'queue') return;
+        done((ev.data.items || []).map((q) => ({ split: q.split, name: q.name, status: q.status || 'unseen', flags: q.flags || [] })));
+      }
+      window.addEventListener('message', onMsg);
+      notifyParent({ type: 'ready' });
+    });
+  }
 
   // --- 姿勢の計算（pose.py の shift_pose / pose_delta と同じ式） ---
 
@@ -226,14 +267,29 @@
     const f = S.frame;
     const flags = S.view.flags || [];
     $('tb-name').textContent = `${f.split}/${f.name}`;
-    $('tb-index').textContent = `${f.index + 1} / ${f.total}`;
-    $('tb-order').textContent = S.flagOnly ? '時系列・要確認のみ' : '時系列';
+    if (isGallery()) {
+      const i = S.items.findIndex((q) => q.split === f.split && q.name === f.name);
+      $('tb-index').textContent = i >= 0 ? `${i + 1} / ${S.items.length}` : `— / ${S.items.length}`;
+      $('tb-order').textContent = '一覧の順';
+    } else {
+      $('tb-index').textContent = `${f.index + 1} / ${f.total}`;
+      $('tb-order').textContent = S.flagOnly ? '時系列・要確認のみ' : '時系列';
+    }
     const cost = $('tb-cost');
     const bad = flags.length > 0; // どの flag でも要確認
     cost.textContent = `照合 ${fmtCost(S.view.cost)} ${bad ? '要確認' : '良好'}`;
     cost.className = `badge ${bad ? 'warn' : 'good'}`;
     $('tb-flags').textContent = flags.join(' ');
     $('tb-cache').textContent = `cache ${f.cache.done} / ${f.cache.total}`;
+    renderSaveBadge();
+  }
+
+  function renderSaveBadge() {
+    if (!isGallery()) return;
+    const el = $('tb-save');
+    if (!S.lastSave) { el.textContent = ''; el.className = 'badge'; return; }
+    el.textContent = S.lastSave.saved ? '保存 done' : `未保存: ${S.lastSave.reasons.join('; ')}`;
+    el.className = `badge ${S.lastSave.saved ? 'saved' : 'unsaved'}`;
   }
 
   function renderHud() {
@@ -296,6 +352,7 @@
     S.lanelet = id;
     renderLanes();
     preview();
+    autosave();
   }
 
   // t: 自動 → 候補 1 → 候補 2 → … → 自動 と巡回する。
@@ -337,6 +394,8 @@
     S.lanes = f.lanes || [];
     S.undo = []; S.redo = [];
     S.latest = null;
+    S.lastSave = null;
+    S.saveFailed = false;
     S.view = { overlay: f.overlay, bev: f.bev, cost: f.cost, label: f.label, flags: f.flags };
     const img = new Image();
     const maskImg = new Image();
@@ -349,6 +408,7 @@
     renderAll();
     renderCandidates(f.candidates);
     renderQueue();
+    if (isGallery()) notifyParent({ type: 'current', key: `${f.split}/${f.name}`, thumb_version: f.thumb_version, status: f.status });
   }
 
   // 応答待ちの間は最新の姿勢を S.latest に置くだけにし、応答後に差があれば送り直す
@@ -392,6 +452,7 @@
     renderHud();
     highlightCandidate();
     preview();
+    autosave();
   }
 
   function setPose(pose, source) {
@@ -410,10 +471,84 @@
     applyPose(h.pose, h.source, h.lanelet === undefined ? null : h.lanelet);
   }
 
+  // --- 自動保存（ギャラリーモード） ---
+  // 姿勢やレーンが変わるたびに /api/save（姿勢 + ラベル + done）。送信中は最新だけ控えておき、
+  // 応答後に差があれば送り直す（プレビューと同じ方式。キーリピートで要求を溜めない）。
+
+  const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
+
+  function autosave() {
+    if (!isGallery() || !S.frame) return;
+    S.saveLatest = { frame: S.frame, pose: S.pose, source: S.source, lanelet: S.lanelet };
+    if (S.saving) return;
+    S.saving = true;
+    (async () => {
+      try {
+        while (S.saveLatest) {
+          const req = S.saveLatest;
+          S.saveLatest = null;
+          let body;
+          try {
+            body = await api.send('/api/save', { split: req.frame.split, name: req.frame.name, pose: req.pose, source: req.source, lanelet: req.lanelet }, 'POST');
+          } catch (e) {
+            // 失敗を「保存 done」のまま見せない。今のフレームなら印を付け、離れる操作を止める（成功したら解ける）。
+            if (req.frame === S.frame) {
+              S.lastSave = { saved: false, reasons: [`保存に失敗: ${e.message}`] };
+              S.saveFailed = true;
+              renderSaveBadge();
+              msg(`保存に失敗: ${e.message}`);
+            }
+            continue;
+          }
+          S.saveCount += 1;
+          applySaveResult(req.frame, body);
+        }
+      } finally {
+        S.saving = false;
+      }
+    })();
+  }
+
+  function applySaveResult(frame, body) {
+    const key = `${frame.split}/${frame.name}`;
+    const item = S.items.find((q) => q.split === frame.split && q.name === frame.name);
+    if (item) { item.status = body.status; item.flags = body.flags || []; }
+    if (frame === S.frame) { // 応答が返る前に別フレームへ移っていたら、表示には反映しない
+      S.lastSave = body;
+      S.saveFailed = false;
+      renderSaveBadge();
+      if (!body.saved) msg(`未保存: ${body.reasons.join('; ')}`);
+      else if ($('msg').textContent.startsWith('未保存')) msg('');
+      renderQueue();
+    }
+    notifyParent({
+      type: 'saved', key, saved: body.saved, status: body.status, flags: body.flags, cost: body.cost,
+      classes: body.classes, rows: body.rows, edited: body.edited, thumb_version: body.thumb_version, reasons: body.reasons,
+    });
+  }
+
+  const saveSettled = async () => { while (S.saving) await wait(30); };
+
+  // 離れる前に呼ぶ。送信中の保存を待ち、最後の保存が失敗していれば false（離れない）。
+  async function leaveAllowed() {
+    await saveSettled();
+    if (!S.saveFailed) return true;
+    msg(`保存に失敗しているので移動しません: ${S.lastSave.reasons.join('; ')}（姿勢を動かして保存し直すか、サーバを確認）`);
+    return false;
+  }
+
+  // 今の姿勢を保存し終えるまで待って、その応答を返す（Enter 用）。
+  async function saveNow() {
+    autosave();
+    await saveSettled();
+    return S.lastSave;
+  }
+
   const savePose = () =>
     api.send('/api/pose', { split: S.frame.split, name: S.frame.name, pose: S.pose, source: S.source, lanelet: S.lanelet }, 'POST');
 
-  const reloadQueue = () => loadQueue().catch((e) => msg(`キューの読み込みに失敗: ${e.message}`)); // flags・状態が変わりうる
+  // flags・状態が変わりうるので読み直す。ギャラリーモードのキューは親から受け取ったものなので描き直すだけ。
+  const reloadQueue = () => (isGallery() ? Promise.resolve(renderQueue()) : loadQueue().catch((e) => msg(`キューの読み込みに失敗: ${e.message}`)));
 
   // 移動系の操作は 1 つずつ。POST からフレーム読み込み・キュー更新までを通して busy にし、
   // 応答待ちの間に押された Enter / s / ← → / キューのクリックは捨てる。
@@ -431,7 +566,7 @@
   // 今のフレームが一覧に無いときだけ時系列の前後にする。無ければ null。
   function neighbor(dir) {
     const f = S.frame;
-    if (S.flagOnly) {
+    if (isGallery() || S.flagOnly) {
       const i = S.items.findIndex((q) => q.split === f.split && q.name === f.name);
       if (i >= 0) {
         const q = S.items[i + dir];
@@ -441,12 +576,15 @@
     return dir > 0 ? f.next : f.prev;
   }
 
-  const noNeighbor = () => msg(S.flagOnly ? '要確認のフレームはこれ以上ありません' : 'これ以上フレームがありません');
+  const noNeighbor = () => msg(isGallery() ? '一覧にはこれ以上フレームがありません'
+    : S.flagOnly ? '要確認のフレームはこれ以上ありません' : 'これ以上フレームがありません');
 
   // 確定せずに別フレームへ移る。今の姿勢は保存しておく（最初の読み込みに失敗して S.frame が無ければ保存しない）。
   const leaveTo = (ref) => exclusive(async () => {
     if (!ref) return noNeighbor();
-    if (S.frame) {
+    if (S.frame && isGallery()) {
+      if (!(await leaveAllowed())) return; // 姿勢は変更のたびに保存済み。送信中のものを待ち、失敗していれば離れない
+    } else if (S.frame) {
       try {
         await savePose();
       } catch (e) {
@@ -462,6 +600,16 @@
 
   const confirm = () => exclusive(async () => {
     const f = S.frame;
+    if (isGallery()) {
+      // Enter は「今の姿勢をそのまま保存（done）して一覧の順で次へ」。変更していないフレームを確認済みにするために残す。
+      const r = await saveNow();
+      if (!r || !r.saved) return msg(`未保存: ${r ? r.reasons.join('; ') : '保存に失敗しました'}`);
+      const next = neighbor(+1);
+      if (next) await openFrame(next);
+      else msg('保存しました（一覧にはこれ以上フレームがありません）');
+      renderQueue();
+      return;
+    }
     const flagNext = S.flagOnly ? neighbor(+1) : undefined; // 確定前の一覧で決める
     let body;
     try {
@@ -478,11 +626,17 @@
 
   const skip = () => exclusive(async () => {
     const f = S.frame;
+    if (isGallery() && !(await leaveAllowed())) return;
     const next = neighbor(+1);
     try {
       await api.send('/api/status', { split: f.split, name: f.name, status: 'skip' }, 'POST');
     } catch (e) {
       return msg(`skip に失敗: ${e.message}`);
+    }
+    if (isGallery()) {
+      const item = S.items.find((q) => q.split === f.split && q.name === f.name);
+      if (item) item.status = 'skip';
+      notifyParent({ type: 'status', key: `${f.split}/${f.name}`, status: 'skip' });
     }
     if (next) await openFrame(next);
     else msg(S.flagOnly ? 'skip しました（要確認のフレームはこれ以上ありません）' : '最後のフレームを skip しました');
@@ -505,6 +659,15 @@
     renderCandidates(body.candidates);
     msg(`再探索: コスト ${fmtCost(body.cost)}`);
   });
+
+  // q / 「一覧へ戻る」: 送信中の保存を待ってから親に閉じてもらう。
+  const closeToGallery = () => exclusive(async () => {
+    if (!isGallery()) return;
+    if (!(await leaveAllowed())) return;
+    if (!inParent) return msg('一覧から開いたときだけ戻れます');
+    notifyParent({ type: 'close' });
+  });
+  $('tb-back').addEventListener('click', closeToGallery);
 
   async function toggleFlagOnly() {
     S.flagOnly = !S.flagOnly;
@@ -530,7 +693,7 @@
     const lower = k.length === 1 ? k.toLowerCase() : k;
     const n = ev.shiftKey ? 5 : 1;
     // 押しっぱなしの自動リピートで、見ていないフレームを確定・skip・通過しないようにする。
-    const once = k === 'Enter' || k === 'ArrowLeft' || k === 'ArrowRight' || lower === 's' || lower === 'f' || lower === 'r';
+    const once = k === 'Enter' || k === 'ArrowLeft' || k === 'ArrowRight' || lower === 's' || lower === 'f' || lower === 'r' || lower === 'q';
     if (once && ev.repeat) { ev.preventDefault(); return; }
     if (k === 'Enter') { ev.preventDefault(); return confirm(); }
     if (k === 'ArrowLeft') { ev.preventDefault(); return leaveTo(neighbor(-1)); }
@@ -557,7 +720,8 @@
       return;
     }
     if (lower === 's') return skip();
-    if (lower === 'f') return toggleFlagOnly();
+    if (lower === 'f') return isGallery() ? msg('一覧側で絞り込んでください') : toggleFlagOnly();
+    if (lower === 'q') return closeToGallery();
     if (lower === 'r') return rematch();
     if (k >= '1' && k <= '4' && k.length === 1) return chooseCandidate(Number(k) - 1);
     // '=' は Shift 無しの '+'（US 配列）。
@@ -578,6 +742,19 @@
 
   async function start() {
     resizeCanvas();
+    if (isGallery()) {
+      document.body.classList.add('gallery-mode');
+      $('tb-back').hidden = false;
+      $('tb-save').hidden = false;
+      $('keys').textContent = GALLERY_KEYS;
+      const items = await queueFromParent(500);
+      if (items) { S.items = items; renderQueue(); } else await loadQueue(); // URL 直打ちなら時系列に落ちる
+      const ref = parseRef(PARAMS.get('frame'));
+      const first = (ref && S.items.find((q) => q.split === ref.split && q.name === ref.name)) || ref || S.items[0];
+      if (!first) return msg('フレームがありません');
+      await openFrame(first);
+      return;
+    }
     await loadQueue();
     // 続きは最初の unseen から。無ければ最初の done 以外（skip）、それも無ければ先頭。
     const first = S.items.find((q) => q.status === 'unseen') || S.items.find((q) => q.status !== 'done') || S.items[0];
@@ -587,7 +764,7 @@
 
   start()
     .then(() => {
-      const m = /[?&]selftest=(\d)/.exec(location.search);
+      const m = /[?&]selftest=(\d+)/.exec(location.search);
       if (m) selftest(Number(m[1]));
     })
     .catch((e) => msg(`キューの読み込みに失敗: ${e.message}`));
@@ -615,6 +792,40 @@
     if (mode === 7) {
       key('keydown', 'ArrowLeft'); await wait(300); await idle();
       return msg(`SELFTEST 7: ${S.frame.name} 候補 ${S.candidates.length} 枚 (${S.candidates.map((c) => c.init).join(', ')})`);
+    }
+    if (mode === 10) {
+      // ギャラリーモード（親無し）: (a) /api/queue に落ちて S.items が時系列全件、(b) 開いたのは URL の frame、
+      // (c) ← → は S.items の順、(d) 連打 20 回で /api/save は 20 回未満、(e) 移動直後に古い応答で badge が変わらない
+      const n0 = S.items.length, name0 = S.frame.name;
+      for (let i = 0; i < 20; i++) key('keydown', 'l');
+      await wait(50); await idle(); while (S.saving) await wait(30);
+      const saves = S.saveCount;
+      key('keydown', 'ArrowRight'); await wait(300); await idle(); while (S.saving) await wait(30);
+      return msg(`SELFTEST 10: mode=${S.mode} items=${n0} start=${name0} saves=${saves} now=${S.frame.name} badge=${$('tb-save') ? $('tb-save').textContent : '(no badge)'}`);
+    }
+    if (mode === 12) {
+      // 保存失敗の扱い: 存在しないレーンで動かす → /api/save が 400 → Enter / → で移動しない。
+      // レーンを戻して動かす → 保存される → → で移動する。
+      const name0 = S.frame.name;
+      const settle = async () => { await wait(50); await idle(); while (S.saving) await wait(30); };
+      S.lanelet = 999999;
+      key('keydown', 'l'); await settle();
+      const badge1 = $('tb-save').textContent;
+      key('keydown', 'Enter'); await wait(300); await settle();
+      const afterEnter = S.frame.name;
+      key('keydown', 'ArrowRight'); await wait(300); await settle();
+      const afterRight = S.frame.name;
+      S.lanelet = null;
+      key('keydown', 'h'); await settle();
+      const badge2 = $('tb-save').textContent;
+      key('keydown', 'ArrowRight'); await wait(300); await settle();
+      return msg(`SELFTEST 12: start=${name0} badge1=${badge1} afterEnter=${afterEnter} afterRight=${afterRight} badge2=${badge2} now=${S.frame.name}`);
+    }
+    if (mode === 11) {
+      // 一覧の自己テスト用（iframe 側）: l で 1 回保存して saved を親に送り、q で close を送る。
+      key('keydown', 'l'); await wait(50); await idle(); while (S.saving) await wait(30);
+      key('keydown', 'q'); await wait(100); await idle();
+      return msg(`SELFTEST 11: saves=${S.saveCount} parent=${inParent}`);
     }
     if (mode === 2 || mode === 3) {
       const before = S.frame.name;

@@ -195,3 +195,51 @@ def test_open_frame_tolerates_stale_lanelet(annotator):
     r2 = annotator.open_frame("train", "f000000")
     assert r2["lanelet"] is None
     assert "999" in r2["lane_note"]
+
+
+def test_save_writes_label_and_marks_done(annotator, mini_root):
+    out = annotator.save("train", "f000002", {"x": 6.0, "y": 0.3, "yaw": 0.0, "pitch": 0.0}, "manual")
+    assert out["saved"] is True and out["status"] == "done" and out["reasons"] == []
+    assert out["classes"] == ["straight"] and out["edited"] is True and out["thumb_version"] != "0-0-0"
+    assert (mini_root / "labels" / "train" / "f000002.txt").is_file()
+    assert annotator.poses.get("train", "f000002")["x"] == 6.0
+    again = annotator.save("train", "f000002", {"x": 6.0, "y": 0.3, "yaw": 0.0, "pitch": 0.0}, "manual")
+    assert again["saved"] is True and again["status"] == "done"
+
+
+def test_save_same_label_keeps_edited(annotator, mini_root):
+    first = annotator.save("train", "f000002", {"x": 6.0, "y": 0.3, "yaw": 0.0, "pitch": 0.0}, "manual")
+    annotator.store._update_frame_state("train", "f000002", edited=False)
+    same = annotator.save("train", "f000002", {"x": 6.0, "y": 0.3, "yaw": 0.0, "pitch": 0.0}, "manual")
+    assert first["saved"] and same["saved"] and same["edited"] is False
+
+
+def test_save_rejected_keeps_label_and_unconfirms(annotator_few_rows, mini_root):
+    a = annotator_few_rows
+    a.store.set_status("train", "f000000", "done")
+    before = (mini_root / "labels" / "train" / "f000000.txt").read_text()
+    out = a.save("train", "f000000", {"x": 5.0, "y": 0.3, "yaw": 0.0, "pitch": 0.0}, "manual")
+    assert out["saved"] is False and out["status"] == "unseen" and out["reasons"]
+    assert (mini_root / "labels" / "train" / "f000000.txt").read_text() == before
+    assert a.poses.get("train", "f000000")["x"] == 5.0
+
+
+def test_save_without_straight_reports_reason(annotator):
+    out = annotator.save("train", "f000000", {"x": 5.0, "y": 0.3, "yaw": 0.0, "pitch": 0.0}, "manual", lanelet=2)
+    assert out["saved"] is False and "straight" in out["reasons"][0]
+
+
+def test_rejected_save_changes_thumb_version(annotator_few_rows):
+    """棄却された保存でも姿勢は変わるので、一覧のサムネイルは描き直されなければならない。"""
+    a = annotator_few_rows
+    v0 = a.gallery.thumb_version("train", "f000002")
+    out = a.save("train", "f000002", {"x": 6.0, "y": 0.3, "yaw": 0.0, "pitch": 0.0}, "manual")
+    assert out["saved"] is False
+    assert a.gallery.thumb_version("train", "f000002") != v0
+
+
+def test_open_frame_includes_thumb_version(annotator):
+    """開いただけで姿勢が初期化されるので、一覧がカードを更新できるよう版を返す。"""
+    f = annotator.open_frame("train", "f000002")
+    assert f["thumb_version"] == annotator.gallery.thumb_version("train", "f000002")
+    assert f["thumb_version"] != "0-0-0"

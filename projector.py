@@ -9,7 +9,7 @@ import sys
 import numpy as np
 
 from tools.path_annotator.matching import densify, observable_polylines
-from tools.path_annotator.store import ROW_START
+from tools.path_annotator.store import ROW_START, rejection_reasons
 
 H, W = 384, 640
 NUM_ROWS = 48
@@ -143,8 +143,11 @@ class Projector:
                 "distance_m": None if info is None else info["distance_m"],
                 "angle_deg": None if info is None else info["angle_deg"]}
 
-    def _trace_from(self, lanelet_id, pose):
-        """指定レーンの最近傍点から経路を辿る。vectormap.trace_paths の locate_lanelet 以降と同じ手順。"""
+    def _trace_detail(self, lanelet_id, pose):
+        """指定レーンの最近傍点から経路を辿る。vectormap.trace_paths の locate_lanelet 以降と同じ手順。
+
+        (幹, 幹の先の分岐ごとの経路) を返す。horizon 内に分岐が無ければ分岐は空。
+        """
         vm, vector_map, position = self._vm, self.vector_map, (pose["x"], pose["y"])
         polyline = vector_map.centerlines[lanelet_id]
         _, _, index, _ = vm._nearest_point_on_polyline(polyline, position)
@@ -152,24 +155,73 @@ class Projector:
         trunk, remaining, terminal, visited = vm._walk(vector_map, lanelet_id, start_point, next_index, HORIZON)
         successors = [c for c in vector_map.connections.get(terminal, []) if c[0] not in visited]
         if remaining <= 0.0 or len(successors) < 2:
-            return {"straight": trunk}
-        paths = {}
+            return trunk, {}
+        branches = {}
         for to_id, turn in successors:
             if turn not in vm.SLOT_NAMES:
                 continue
             branch_polyline = vector_map.centerlines[to_id]
             branch, _, _, _ = vm._walk(vector_map, to_id, branch_polyline[0], 1, remaining)
             merged = vm._drop_consecutive_duplicates(np.vstack([trunk, branch]))
-            if turn not in paths or len(merged) > len(paths[turn]):
-                paths[turn] = merged
-        return paths or {"straight": trunk}
+            if turn not in branches or len(merged) > len(branches[turn]):
+                branches[turn] = merged
+        return trunk, branches
+
+    def _trace_from(self, lanelet_id, pose):
+        trunk, branches = self._trace_detail(lanelet_id, pose)
+        return branches or {"straight": trunk}
+
+    def _branch_of(self, lanelet_id):
+        """lanelet_id が分岐（後続が 2 本以上のレーン）の直後のレーンなら (分岐レーン id, 入る向き)。無ければ None。"""
+        for from_id, successors in self.vector_map.connections.items():
+            if len(successors) < 2:
+                continue
+            for to_id, turn in successors:
+                if to_id == lanelet_id and turn in CLASSES:
+                    return from_id, turn
+        return None
+
+    def _branch_paths(self, from_id, lane_id, pose):
+        """分岐 from_id の直後のレーン lane_id 上にいるときの経路。
+
+        分岐の後続をそれぞれ地図の turn_direction のクラスで辿る（左折レーン上なら left、兄弟の直進レーンが straight）。
+        単一の幹を無条件に straight と呼ばない。自レーンの先にさらに分岐があれば、空いているクラスにだけ入れる。
+        """
+        paths, extras = {}, {}
+        for to_id, turn in self.vector_map.connections[from_id]:
+            if turn not in CLASSES:
+                continue
+            trunk, branches = self._trace_detail(to_id, pose)
+            path = branches.get("straight", trunk)
+            if turn not in paths or len(path) > len(paths[turn]):
+                paths[turn] = path
+            if to_id == lane_id:
+                extras = {cls: p for cls, p in branches.items() if cls != "straight"}
+        for cls, path in extras.items():
+            paths.setdefault(cls, path)
+        return paths
+
+    def _usable_straight(self, paths, pose):
+        """paths の straight が学習に使える形で画像に写るか（store の棄却基準と同じ判定）。"""
+        if "straight" not in paths:
+            return False
+        rows = self._rows(paths["straight"], pose)
+        return rows is not None and not rejection_reasons([{"class": "straight", **rows}])
 
     def paths(self, pose, lanelet=None):
+        """使う経路。分岐直後のレーン上では地図のクラスで兄弟も辿る。
+
+        その straight（兄弟の直進レーン）が画像に写らない・棄却基準に掛かるときは、学習側が straight を
+        必須とするので従来の辿り方（自レーンの幹を straight）に戻す。
+        """
         lane_id = self.resolve_lane(pose, lanelet)["id"] if self._vm is not None else None
-        if lane_id is not None:
-            paths = self._trace_from(lane_id, pose)
-        else:
+        if lane_id is None:
             paths = self._trace_paths(self.vector_map, (pose["x"], pose["y"]), pose["yaw"], HORIZON)
+        else:
+            branch = self._branch_of(lane_id)
+            paths = self._branch_paths(branch[0], lane_id, pose) if branch is not None else None
+            if paths is None or not self._usable_straight(paths, pose):
+                paths = self._trace_from(lane_id, pose)
         return {cls: np.asarray(paths[cls], float) for cls in CLASSES if cls in paths}
 
     def project_polyline(self, poly_map, pose):

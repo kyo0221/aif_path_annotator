@@ -149,3 +149,53 @@ def test_resolve_lane_without_vectormap_module(projector):
         bare.resolve_lane(pose, lanelet=1)
     assert bare.lane_candidates(pose) == []
     assert bare.auto_lanelet(pose) is None
+
+
+# straight.osm の分岐: 9001 (x 0→30) → 9002 straight (x 30→60) / 9004 left ((30,0)→(36,6)) / 9005 right ((30,0)→(36,-6))
+LANE_MAIN, LANE_STRAIGHT, LANE_LEFT = 9001, 9002, 9004
+
+
+def test_paths_on_turn_lane_keep_map_turn_class(projector):
+    """左折レーン 9004 に入った直後。地図のとおり left とし、兄弟の 9002 を straight にする（単一 trunk を straight にしない）。"""
+    pose = make_pose(31.0, 0.5, 0.0)
+    assert projector.auto_lanelet(pose) == LANE_LEFT
+    paths = projector.paths(pose)
+    assert {"straight", "left"} <= set(paths)
+    left, straight = paths["left"], paths["straight"]
+    assert (left[:, 1] > 0).all() and (np.diff(left[:, 0]) > 0).all()        # 9004: 左へ逸れる
+    assert (np.abs(straight[:, 1]) < 1e-6).all() and straight[-1, 0] > 40   # 9002: 本線を直進
+    label = projector.label(pose)
+    assert {"straight", "left"} <= {e["class"] for e in label}
+    validate_label(label)
+
+
+def test_paths_on_turn_lane_fall_back_when_straight_not_usable(projector):
+    """左折レーンの奥で兄弟の直進レーンが画像に使える形で写らないときは、従来どおり自レーンの幹を straight にする。"""
+    import math
+
+    pose = make_pose(33.0, 3.0, math.pi / 4)
+    assert projector.auto_lanelet(pose) == LANE_LEFT
+    paths = projector.paths(pose)
+    assert set(paths) == {"straight"}
+    straight = paths["straight"]
+    assert np.allclose(straight[-1], [36.0, 6.0]) and (straight[:, 0] > 33).all()  # 9004 の幹（自車の先から終点まで）
+    assert (straight[:, 1] > 0).all()
+    validate_label(projector.label(pose))
+
+
+def test_paths_on_straight_lane_after_fork_keep_siblings(projector):
+    """分岐直後の直進レーン 9002 上。straight は 9002、兄弟の 9004 が left、9005 が right。"""
+    pose = make_pose(31.0, 0.0, 0.0)
+    assert projector.auto_lanelet(pose) == LANE_STRAIGHT
+    paths = projector.paths(pose)
+    assert set(paths) == {"straight", "left", "right"}
+    assert (np.abs(paths["straight"][:, 1]) < 1e-6).all()
+    assert paths["left"][-1, 1] > 0 and paths["right"][-1, 1] < 0
+    validate_label(projector.label(pose))
+
+
+def test_paths_before_fork_unchanged(projector):
+    """分岐手前の本線 9001 上は従来どおり（幹 + 分岐ごとのクラス）。"""
+    paths = projector.paths(make_pose(15.0, 0.0, 0.0))
+    assert set(paths) == {"straight", "left", "right"}
+    assert (np.abs(paths["straight"][:, 1]) < 1e-6).all() and paths["straight"][0, 0] < 16

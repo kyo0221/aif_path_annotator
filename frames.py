@@ -39,6 +39,10 @@ class FrameIndex:
     def __len__(self):
         return len(self.order)
 
+    def bag_index(self, split, name):
+        """(bag, image_index)。未知のフレームは KeyError。"""
+        return self._time[(split, name)]
+
     def position(self, split, name):
         """order 上の位置。未知のフレームは KeyError。"""
         return self._pos[(split, name)]

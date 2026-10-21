@@ -148,7 +148,8 @@ class LabelStore:
     def load(self, split, name):
         return json.loads(self.label_path(split, name).read_text())
 
-    def save(self, split, name, label):
+    def save(self, split, name, label, edited=True):
+        """ラベルを書く。edited は annotation_state.json の「手で直した」印（None なら触らない。ts は更新する）。"""
         validate_label(label)
         # ファイルシステムに触る前に名前を検査する。
         _check_name(split)
@@ -156,7 +157,8 @@ class LabelStore:
         # labels/<split>/ はツールが生成するので、無ければここで作る。
         (self.root / "labels" / split).mkdir(parents=True, exist_ok=True)
         _atomic_write_json(self.label_path(split, name), label)
-        self._update_frame_state(split, name, edited=True)
+        fields = {} if edited is None else {"edited": edited}
+        self._update_frame_state(split, name, **fields)
 
     # --- バックアップ ---
 

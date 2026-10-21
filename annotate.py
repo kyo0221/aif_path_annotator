@@ -4,6 +4,8 @@
         --vectormap <aiformula_course.osm> --yolop <yolopv2.pt> \
         --params <main_params.yaml> --learning-repo <learning>
     # --port 9000 / --no-browser / --cost-threshold 0.25
+
+起動するとブラウザで一覧（/）が開く。従来の時系列に回る画面は /annotate。
 """
 import argparse
 import errno

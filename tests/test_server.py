@@ -153,3 +153,19 @@ def test_confirm_passes_lanelet(server, mini_root):
     assert status == 200
     poses = json.loads((mini_root / "poses.json").read_text())
     assert poses["frames"]["train/f000000"]["lanelet"] == 1
+
+
+def test_gallery_pages_and_api(server, mini_root):
+    status, html = call(server, "GET", "/")
+    assert status == 200 and b"gallery.js" in html
+    status, html = call(server, "GET", "/annotate")
+    assert status == 200 and b"app.js" in html
+    status, t = call(server, "GET", "/api/gallery")
+    assert status == 200 and len(t["frames"]) == 3 and t["frames"][0]["key"] == "train/f000000"
+    status, jpg = call(server, "GET", "/api/thumb/train/f000000.jpg?v=1")
+    assert status == 200 and jpg[:2] == b"\xff\xd8"
+    status, _ = call(server, "GET", "/api/thumb/train/nope.jpg")
+    assert status == 404
+    status, s = call(server, "POST", "/api/save", {"split": "train", "name": "f000002", "pose": POSE, "source": "manual", "lanelet": None})
+    assert status == 200 and s["saved"] is True and s["status"] == "done"
+    assert (mini_root / "labels" / "train" / "f000002.txt").is_file()

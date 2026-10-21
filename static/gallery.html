@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>投影画像の一覧</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/gallery.css">
+</head>
+<body>
+<header>
+  <h1>投影画像の一覧 <small id="count">読み込み中…</small> <a id="classic" href="/annotate">順番に回る（従来の画面）</a></h1>
+  <div class="controls">
+    <label>split <select id="f-split"><option value="">all</option></select></label>
+    <label>bag <select id="f-bag"><option value="">all</option></select></label>
+    <label>状態 <select id="f-status"><option value="">all</option><option value="unseen">unseen</option><option value="done">done</option><option value="skip">skip</option></select></label>
+    <label>フラグ <select id="f-flag"><option value="">all</option><option value="any">あり</option><option value="none">なし</option><option>jump</option><option>cost</option><option>no_path</option><option>few_points</option><option>pitch</option><option>lane</option></select></label>
+    <label>姿勢 <select id="f-src"><option value="">all</option><option>propagated</option><option>auto</option><option>gnss</option><option>manual</option><option>candidate</option></select></label>
+    <label>経路 <select id="f-cls"><option value="">all</option><option value="left">left あり</option><option value="right">right あり</option><option value="only">straight のみ</option></select></label>
+    <label>手で直した <select id="f-edited"><option value="">all</option><option value="1">あり</option><option value="0">なし</option></select></label>
+    <label id="l-manual" hidden>手動ラベル <select id="f-manual"><option value="">all</option><option value="1">あり</option><option value="0">なし</option></select></label>
+    <label id="l-relabel" hidden>再投影 <select id="f-relabel"><option value="">all</option><option value="1">変更あり</option><option value="0">変更なし</option></select></label>
+    <label>並び <select id="f-sort"><option value="time">時系列</option><option value="name">名前</option><option value="cost">コスト降順</option></select></label>
+    <label>検索 <input type="search" id="f-q" placeholder="フレーム名"></label>
+    <label>幅 <input type="range" id="f-size" min="160" max="640" step="20" value="320"></label>
+  </div>
+  <div class="legend">
+    <span style="--sw:var(--c-map)">地図線 (vectormap)</span>
+    <span style="--sw:var(--c-straight)">straight</span>
+    <span style="--sw:var(--c-left)">left</span>
+    <span style="--sw:var(--c-right)">right</span>
+    <span style="--sw:transparent">点 = 48 行ラベル。クリックで開いて直す（変更した時点で保存・done）。q で一覧へ戻る</span>
+  </div>
+</header>
+<main>
+  <div class="grid" id="grid"></div>
+  <div id="sentinel"></div>
+  <div class="empty" id="empty" hidden>該当なし</div>
+</main>
+<div id="annot" hidden><iframe id="annot-frame" title="アノテーション"></iframe></div>
+<script src="/static/gallery.js"></script>
+</body>
+</html>
